@@ -254,14 +254,20 @@ router.post("/chat/ask", auth, async (req, res) => {
     try {
         const { question, link } = req.body;
         const userId = req.user.id;
+        
+        // Ensure the Python API URL is configured
+        const pythonApiUrl = process.env.PYTHON_API_URL;
+        if (!pythonApiUrl) {
+            console.error("CRITICAL: PYTHON_API_URL environment variable is missing.");
+            return res.status(500).json({ error: "Internal Server Configuration Error" });
+        }
 
         if (!question) return res.status(400).json({ error: "Question is required" });
 
         // Forward request to Python FastAPI Service
-        // We assume your Python app has a corresponding endpoint (see below)
         console.log(`💬 Chat Request | User: ${userId} | Link: ${link}`);
 
-        const response = await axios.post(`${process.env.PYTHON_API_URL}/chat`,{
+        const response = await axios.post(`${pythonApiUrl}/chat`, {
             user_id: userId,
             query: question,
             link: link || null 
@@ -270,8 +276,17 @@ router.post("/chat/ask", auth, async (req, res) => {
         res.json({ answer: response.data.answer });
 
     } catch (error) {
-        console.error("Chat Error:", error.message);
-        res.status(500).json({ error: "Failed to get answer from AI." });
+        // Detailed error logging
+        if (error.response) {
+            console.error(`Chat Error [${error.response.status}]:`, error.response.data);
+            res.status(error.response.status).json({ error: error.response.data.detail || "AI Service Error" });
+        } else if (error.request) {
+            console.error("Chat Error: No response from Python service.");
+            res.status(503).json({ error: "AI Service Unavailable" });
+        } else {
+            console.error("Chat Error:", error.message);
+            res.status(500).json({ error: "Internal Server Error" });
+        }
     }
 });
 

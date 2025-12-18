@@ -119,7 +119,7 @@ export const analyzeReport = async (req, res) => {
       finalReportType,
       keyword || null,
       extractedText,
-      sourceFilename
+      // sourceFilename
     );
 
     if (!agenticResponse || agenticResponse.success === false) {

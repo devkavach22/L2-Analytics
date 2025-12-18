@@ -14,8 +14,7 @@ import {
   CheckCircle2, MessageSquare, FolderOpen, 
   ArrowLeft, Pencil, Loader2,
   Link as LinkIcon, Youtube, ExternalLink, Play,
-  Info, FileInput, List, Languages, ScanText, User, Send, Bot, RefreshCw, Copy, Smartphone,
-  Cpu
+  Info, FileInput, List, Languages, ScanText, User, Send, Bot, RefreshCw, Copy, Smartphone
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -81,10 +80,6 @@ const getUserId = (user: any) => {
     return user._id || user.id || user.userId;
 };
 
-const getToken = () => {
-    return localStorage.getItem("token") || "";
-};
-
 const getFileStyle = (ext: string) => {
   const e = ext ? ext.toLowerCase() : "file";
   if (['pdf'].includes(e)) return { icon: FileText, color: "text-rose-500", bg: "bg-rose-50" };
@@ -135,8 +130,8 @@ type LinkType = {
   status: 'pending' | 'processing' | 'completed' | 'failed';
   createdAt: string;
   ocrStatus?: 'pending' | 'completed'; 
-  extractedText?: string;
-  translatedText?: string;
+  extractedText?: string; // Original Text
+  translatedText?: string; // Translated Text
   originalUrl?: string;
 };
 
@@ -147,10 +142,32 @@ type ChatMessageType = {
     timestamp: Date;
 };
 
+// --- MOCK AI DATA ---
+const sentimentData = [
+  { subject: 'Positivity', A: 120, fullMark: 150 },
+  { subject: 'Clarity', A: 98, fullMark: 150 },
+  { subject: 'Conciseness', A: 86, fullMark: 150 },
+  { subject: 'Actionability', A: 99, fullMark: 150 },
+  { subject: 'Compliance', A: 85, fullMark: 150 },
+  { subject: 'Tone', A: 65, fullMark: 150 },
+];
+
+const trendData = [
+  { name: 'Mon', positive: 40, negative: 24, neutral: 24 },
+  { name: 'Tue', positive: 30, negative: 13, neutral: 22 },
+  { name: 'Wed', positive: 20, negative: 58, neutral: 22 },
+  { name: 'Thu', positive: 27, negative: 39, neutral: 20 },
+  { name: 'Fri', positive: 18, negative: 48, neutral: 21 },
+  { name: 'Sat', positive: 23, negative: 38, neutral: 25 },
+  { name: 'Sun', positive: 34, negative: 43, neutral: 21 },
+];
+
 // --- COMPONENT: FILE VIEWER OVERLAY ---
 const FileViewerOverlay = ({ file, onClose }: { file: FileType; onClose: () => void }) => {
-  // baseURL removed as requested, using publicPath directly 
-  const fileUrl = file.publicPath;
+  const baseURL = "http://192.168.11.236:5000";
+  const fileUrl = file.publicPath 
+    ? (file.publicPath.startsWith('http') ? file.publicPath : `${baseURL}${file.publicPath}`) 
+    : null;
   const ext = file.extension.toLowerCase();
 
   const renderContent = () => {
@@ -223,11 +240,7 @@ export default function UserDashboard() {
   const [folders, setFolders] = useState<FolderType[]>([]);
   const [allFiles, setAllFiles] = useState<FileType[]>([]); 
   const [links, setLinks] = useState<LinkType[]>([]); 
-  
-  // Dashboard Metrics & Charts (Automatic)
-  const [stats, setStats] = useState<any>({ processed: 0, storage: 0, storageUnit: 'MB', hoursSaved: 0, systemHealth: 100 });
-  const [sentimentData, setSentimentData] = useState<any[]>([]);
-  const [trendData, setTrendData] = useState<any[]>([]);
+  const [stats, setStats] = useState<any>({ processed: 0, storage: 0, storageUnit: 'MB', hoursSaved: 0 });
   
   // Search State
   const [folderSearchTerm, setFolderSearchTerm] = useState(""); 
@@ -248,7 +261,6 @@ export default function UserDashboard() {
   const [activeChatLink, setActiveChatLink] = useState<LinkType | null>(null);
   const [chatMessages, setChatMessages] = useState<ChatMessageType[]>([]);
   const [chatInput, setChatInput] = useState("");
-  const [isChatLoading, setIsChatLoading] = useState(false);
   
   // Text Viewer State
   const [viewingTextLink, setViewingTextLink] = useState<LinkType | null>(null);
@@ -299,6 +311,7 @@ export default function UserDashboard() {
 
   const showToast = (message: string, type: 'info' | 'success' | 'error' = 'info') => {
     setToast({ message, type });
+    // Auto hide success/error toasts after a few seconds
     setTimeout(() => setToast(null), 5000);
   };
 
@@ -342,8 +355,8 @@ export default function UserDashboard() {
              title: l.title || l.url,
              status: l.status || 'completed',
              createdAt: l.createdAt,
-             ocrStatus: l.ocrStatus || 'pending', 
-             extractedText: l.extractedText || "",
+             ocrStatus: l.ocrStatus || 'pending', // Default to pending if missing
+             extractedText: l.extractedText || "Mock extracted text: This is content extracted from the URL...",
              translatedText: l.translatedText || "",
              originalUrl: l.url
         })) : [];
@@ -357,73 +370,20 @@ export default function UserDashboard() {
         });
         setFolders(updatedFolders);
 
-        // 5. Automatic Stats Calculation
+        // 5. Stats
         const totalBytes = myFiles.reduce((acc: number, f: any) => acc + (f.size || 0), 0);
         let storage = totalBytes / (1024 * 1024);
         let unit = 'MB';
         if (storage > 1024) { storage /= 1024; unit = 'GB'; }
         
-        // Dynamic Health KPI (Ratio of successful items to a baseline)
-        const totalItems = myFiles.length + myLinks.length;
-        const systemEfficiency = totalItems > 0 ? Math.min(100, 95 + (totalItems % 5)) : 100;
-
         setStats({
-            processed: totalItems,
+            processed: myFiles.length,
             storage: parseFloat(storage.toFixed(2)),
             storageUnit: unit,
-            hoursSaved: (totalItems * 0.25).toFixed(1),
-            systemHealth: systemEfficiency
+            hoursSaved: (myFiles.length * 0.2).toFixed(1)
         });
 
-        // 6. Automatic Chart Data Generation
-        generateAutomaticCharts(myFiles, myLinks);
-
     } catch (e) { console.error("Fetch Data Error", e); }
-  };
-
-  // --- AUTOMATIC CHART GENERATION ---
-  const generateAutomaticCharts = (files: FileType[], links: LinkType[]) => {
-      // 1. Generate Trend Data (Last 7 Days)
-      const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-      const today = new Date();
-      const last7Days = Array.from({length: 7}, (_, i) => {
-          const d = new Date(today);
-          d.setDate(d.getDate() - (6 - i));
-          return d;
-      });
-
-      const newTrendData = last7Days.map(date => {
-          const dateStr = date.toDateString();
-          // Count files/links created on this day
-          const filesCount = files.filter(f => f.createdAt && new Date(f.createdAt).toDateString() === dateStr).length;
-          const linksCount = links.filter(l => l.createdAt && new Date(l.createdAt).toDateString() === dateStr).length;
-          
-          // Randomize sentiment slightly based on count for visual variety if count > 0
-          const base = (filesCount + linksCount) * 10;
-          return {
-              name: days[date.getDay()],
-              positive: base + Math.floor(Math.random() * 20),
-              negative: Math.floor(Math.random() * 10),
-              neutral: Math.floor(Math.random() * 15)
-          };
-      });
-      setTrendData(newTrendData);
-
-      // 2. Generate Sentiment/Cognitive Data (Radar)
-      // Base this on file types or content density
-      const pdfCount = files.filter(f => f.extension.toLowerCase().includes('pdf')).length;
-      const imgCount = files.filter(f => ['jpg','png'].includes(f.extension.toLowerCase())).length;
-      const linkCount = links.length;
-
-      const newSentimentData = [
-        { subject: 'Positivity', A: 100 + (linkCount * 2), fullMark: 150 },
-        { subject: 'Clarity', A: 90 + (pdfCount * 5), fullMark: 150 },
-        { subject: 'Conciseness', A: 80 + (imgCount * 3), fullMark: 150 },
-        { subject: 'Actionability', A: 95 + (files.length), fullMark: 150 },
-        { subject: 'Compliance', A: 110, fullMark: 150 },
-        { subject: 'Tone', A: 85, fullMark: 150 },
-      ];
-      setSentimentData(newSentimentData);
   };
 
   // --- TRANSFORM: Handles API Search Results Correctly ---
@@ -461,15 +421,19 @@ export default function UserDashboard() {
   const handleCreateFolder = async () => {
       if(!newFolderName.trim() || !currentUser) return;
       const uid = getUserId(currentUser);
+      // Logic to get the creator's name dynamically, fallback to "Prachi Shah" if not found
+      const creatorName = currentUser?.name || currentUser?.username || "Prachi Shah";
+
       try {
-          // Explicitly passing token in header to avoid 500 error on backend
-          await Instance.post(`/auth/folder/create`, 
-            { name: newFolderName, desc: newFolderDesc, userId: uid },
-            { headers: { 'Authorization': getToken() } }
-          );
+          await Instance.post(`/auth/folder/create`, { 
+            name: newFolderName, 
+            desc: newFolderDesc, 
+            userId: uid,
+            createdBy: creatorName 
+          });
           setNewFolderName(""); setNewFolderDesc(""); fetchData();
           showToast("Folder created successfully!", "success");
-      } catch(e) { console.error("Create Folder Error", e); showToast("Failed to create folder", "error"); }
+      } catch(e) { console.error("Create Folder Error", e); }
   };
 
   // --- TRIGGER UPLOAD MODAL ---
@@ -502,7 +466,7 @@ export default function UserDashboard() {
     
     try {
         await Instance.post(uploadUrl, fd, { headers: { "Content-Type": "multipart/form-data" } });
-        fetchData(); // This will auto-update charts and counts
+        fetchData();
         showToast("Success! Files uploaded & processed.", "success");
     } catch(e: any) { 
         console.error("Upload Error", e);
@@ -527,9 +491,9 @@ export default function UserDashboard() {
     if(!newLinkUrl.trim()) return;
     showToast("Adding link...", "info");
     try {
-        await Instance.post('/auth/link/add', { url: newLinkUrl });
+        const res = await Instance.post('/auth/link/add', { url: newLinkUrl });
         setNewLinkUrl("");
-        fetchData(); // This will auto-update charts
+        fetchData(); 
         showToast("Link added successfully!", "success");
     } catch (e: any) {
         console.error("Add Link Error", e);
@@ -543,7 +507,9 @@ export default function UserDashboard() {
       showToast("Running OCR extraction...", "info");
 
       try {
+          // Mock API call for now. In real app: await Instance.post('/auth/link/ocr', { linkId: link.id });
           await new Promise(r => setTimeout(r, 2000));
+          
           setLinks(prev => prev.map(l => l.id === link.id ? { ...l, ocrStatus: 'completed', extractedText: `Extracted content from ${l.url}...\nLorem ipsum dolor sit amet.` } : l));
           showToast("OCR Completed Successfully", "success");
       } catch (e) {
@@ -561,55 +527,29 @@ export default function UserDashboard() {
       showToast("Chat initialized", "info");
   };
 
-  // --- UPDATED CHAT FUNCTIONALITY ---
   const handleSendChatMessage = async () => {
       if(!chatInput.trim() || !activeChatLink) return;
       
       const userMsg: ChatMessageType = { id: Date.now().toString(), role: 'user', content: chatInput, timestamp: new Date() };
       setChatMessages(prev => [...prev, userMsg]);
       setChatInput("");
-      setIsChatLoading(true);
 
-      try {
-          const token = getToken();
-          // Sending request to the specific endpoint provided
-          const response = await Instance.post('/auth/chat/ask', {
-            question: userMsg.content,
-            link: activeChatLink.url
-          }, {
-             headers: { 
-               'Authorization': token, // Explicitly passing token as requested
-             }
-          });
-
-          // Assuming response structure has an answer field. Adjust based on actual API response.
-          const aiText = response.data.answer || response.data.response || response.data.message || JSON.stringify(response.data);
-
+      // Simulate AI response
+      setTimeout(() => {
           const aiMsg: ChatMessageType = { 
               id: (Date.now() + 1).toString(), 
               role: 'assistant', 
-              content: aiText, 
+              content: `This is a simulated response regarding "${activeChatLink.title}". I found relevant information about your query in the document.`, 
               timestamp: new Date() 
           };
           setChatMessages(prev => [...prev, aiMsg]);
-      } catch (error) {
-          console.error("Chat Error", error);
-          const errorMsg: ChatMessageType = { 
-              id: (Date.now() + 1).toString(), 
-              role: 'assistant', 
-              content: "Sorry, I encountered an error connecting to the intelligence engine.", 
-              timestamp: new Date() 
-          };
-          setChatMessages(prev => [...prev, errorMsg]);
-      } finally {
-          setIsChatLoading(false);
-      }
+      }, 1000);
   };
 
   // --- TRANSLATION LOGIC ---
   const handleOpenTextViewer = (link: LinkType) => {
       setViewingTextLink(link);
-      setTextViewerMode('original'); 
+      setTextViewerMode('original'); // Always reset to original when opening
   };
 
   const handleTranslateText = async () => {
@@ -618,11 +558,16 @@ export default function UserDashboard() {
       showToast("Translating content...", "info");
       
       try {
+          // Mock API call: await Instance.post('/auth/link/translate', { linkId: viewingTextLink.id });
           await new Promise(r => setTimeout(r, 1500));
+          
           const translated = `(Translated to English)\n\n${viewingTextLink.extractedText}`;
+          
+          // Update local state and links state
           const updatedLink = { ...viewingTextLink, translatedText: translated };
           setViewingTextLink(updatedLink);
           setLinks(prev => prev.map(l => l.id === updatedLink.id ? updatedLink : l));
+          
           setTextViewerMode('translated');
           showToast("Translation complete!", "success");
       } catch (e) {
@@ -735,6 +680,7 @@ export default function UserDashboard() {
             exit={{ opacity: 0, y: 20, scale: 0.95 }}
             className="fixed bottom-4 right-4 w-[350px] md:w-[400px] h-[550px] bg-white rounded-2xl shadow-2xl border border-slate-200 z-[200] flex flex-col overflow-hidden"
         >
+            {/* Chat Header */}
             <div className="bg-white p-4 border-b border-slate-100 flex justify-between items-center shrink-0 shadow-sm z-10">
                 <div className="flex items-center gap-3">
                     <div className="h-10 w-10 bg-orange-100 rounded-full flex items-center justify-center text-orange-600 border border-orange-200">
@@ -752,6 +698,7 @@ export default function UserDashboard() {
                 </Button>
             </div>
             
+            {/* Chat Messages Area */}
             <div className="flex-1 overflow-y-auto p-4 space-y-4 bg-slate-50" ref={chatScrollRef}>
                 <div className="text-center text-[10px] text-slate-400 my-4 uppercase tracking-widest font-bold">Today</div>
                 {chatMessages.map((msg, index) => (
@@ -772,27 +719,19 @@ export default function UserDashboard() {
                         </div>
                     </motion.div>
                 ))}
-                {isChatLoading && (
-                    <div className="flex w-full justify-start">
-                        <div className="bg-white p-3 rounded-2xl rounded-bl-none border border-slate-200 shadow-sm flex items-center gap-2">
-                            <Loader2 className="h-4 w-4 text-orange-500 animate-spin" />
-                            <span className="text-xs text-slate-500">Thinking...</span>
-                        </div>
-                    </div>
-                )}
             </div>
 
+            {/* Input Area */}
             <div className="p-3 bg-white border-t border-slate-100 shrink-0">
                 <form onSubmit={(e) => { e.preventDefault(); handleSendChatMessage(); }} className="flex gap-2 items-center">
                     <Input 
                         value={chatInput} 
                         onChange={(e) => setChatInput(e.target.value)} 
                         placeholder="Type your message..." 
-                        disabled={isChatLoading}
                         className="rounded-full bg-slate-50 border-slate-200 text-xs focus-visible:ring-orange-400 py-5 pl-4"
                         autoFocus
                     />
-                    <Button type="submit" size="icon" disabled={!chatInput.trim() || isChatLoading} className="rounded-full bg-slate-900 hover:bg-slate-800 text-white w-10 h-10 shrink-0 shadow-lg shadow-slate-900/20 disabled:opacity-50 disabled:cursor-not-allowed transition-all">
+                    <Button type="submit" size="icon" disabled={!chatInput.trim()} className="rounded-full bg-slate-900 hover:bg-slate-800 text-white w-10 h-10 shrink-0 shadow-lg shadow-slate-900/20 disabled:opacity-50 disabled:cursor-not-allowed transition-all">
                         <Send className="h-4 w-4 ml-0.5" />
                     </Button>
                 </form>
@@ -817,6 +756,7 @@ export default function UserDashboard() {
                 className="w-full max-w-4xl h-[85vh] bg-white rounded-2xl shadow-2xl overflow-hidden flex flex-col"
                 onClick={(e) => e.stopPropagation()}
             >
+                {/* Header */}
                 <div className="px-6 py-4 border-b border-slate-100 flex justify-between items-center bg-white shrink-0">
                     <div className="flex items-center gap-3">
                         <div className="p-2.5 bg-orange-50 rounded-xl text-orange-500 border border-orange-100"><ScanText className="h-5 w-5" /></div>
@@ -844,6 +784,7 @@ export default function UserDashboard() {
                     </div>
                 </div>
 
+                {/* Tabs */}
                 <div className="px-6 border-b border-slate-100 bg-slate-50/50 flex gap-6">
                     <button 
                         onClick={() => setTextViewerMode('original')}
@@ -866,6 +807,7 @@ export default function UserDashboard() {
                     </button>
                 </div>
 
+                {/* Content Area */}
                 <div className="flex-1 overflow-y-auto p-8 bg-slate-50 relative">
                     <div className="absolute top-4 right-4 z-10">
                          <Button 
@@ -984,6 +926,7 @@ export default function UserDashboard() {
           onClick={(e) => { e.stopPropagation(); setActiveFolderMenu(null); }}
           className="bg-slate-900 w-full max-w-[96vw] h-[92vh] rounded-[24px] overflow-hidden flex shadow-2xl relative border border-slate-700/50"
        >
+          {/* SIDEBAR */}
           <div className="w-64 bg-[#0F172A] flex flex-col flex-shrink-0 border-r border-slate-800">
              <div className="p-6 pb-4">
                 <div className="flex items-center gap-2 text-orange-500 mb-6">
@@ -1027,6 +970,7 @@ export default function UserDashboard() {
              </div>
           </div>
 
+          {/* MAIN CONTENT */}
           <div className="flex-1 bg-[#FFF8F0] flex flex-col relative overflow-hidden min-h-0">
              {activeWorkspaceTab === "folders" && !selectedFolder && renderFoldersView()}
              {activeWorkspaceTab === "files" && renderFilesView()}
@@ -1042,6 +986,7 @@ export default function UserDashboard() {
           <div className="flex-shrink-0 mb-6 flex justify-between items-end">
             <h1 className="text-2xl font-bold text-slate-800">Project Folders</h1>
              <div className="flex items-center gap-4">
+                 {/* VIEW MODE TOGGLE */}
                  <div className="bg-slate-100 rounded-lg p-1 flex items-center gap-1">
                      <button 
                         onClick={() => setFolderViewMode("grid")}
@@ -1075,6 +1020,7 @@ export default function UserDashboard() {
              </div>
           </div>
 
+            {/* Create Folder Box */}
             {!folderSearchTerm && (
             <div className="bg-white rounded-[20px] p-5 shadow-sm border border-orange-100 mb-6 flex-shrink-0">
                 <div className="flex flex-col xl:flex-row gap-4 items-end">
@@ -1095,6 +1041,7 @@ export default function UserDashboard() {
 
           <div className="flex-1 overflow-y-auto min-h-0">
             {folderViewMode === "grid" ? (
+                // GRID VIEW (WATERFALL)
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-5 pb-10">
                     {getDisplayFolders().map(folder => (
                         <motion.div 
@@ -1119,6 +1066,15 @@ export default function UserDashboard() {
                                             >
                                                 <MessageSquare className="h-3.5 w-3.5" /> Chat
                                             </button>
+                                             <button 
+                                                onClick={() => { 
+                                                    setActiveFolderMenu(null);
+                                                    setActiveWorkspaceTab("links");
+                                                }} 
+                                                className="w-full text-left px-3 py-2.5 hover:bg-red-50 text-red-600 text-xs flex items-center gap-2 font-medium transition-colors"
+                                            >
+                                                <Youtube className="h-3.5 w-3.5" /> YouTube
+                                            </button>
                                             <div className="h-px bg-slate-100 my-1"></div>
                                             <button className="w-full text-left px-3 py-2.5 hover:bg-slate-50 text-slate-400 hover:text-slate-600 text-xs flex items-center gap-2 font-medium transition-colors">
                                                 <Trash2 className="h-3.5 w-3.5" /> Delete
@@ -1132,6 +1088,7 @@ export default function UserDashboard() {
                                 <p className="text-[10px] text-slate-400 truncate">{folder.desc}</p>
                             </div>
                             <div className="flex flex-col gap-1 z-10 relative">
+                                {/* CREATED BY - ADDED HERE */}
                                 <div className="flex items-center gap-1.5 text-[10px] font-medium text-slate-500">
                                     <User className="h-3 w-3 text-slate-400" /> 
                                     <span>Created by <span className="text-slate-700 font-bold">{folder.creatorName}</span></span>
@@ -1145,6 +1102,7 @@ export default function UserDashboard() {
                     ))}
                 </div>
             ) : (
+                // LIST VIEW (TABLE)
                 <div className="bg-white rounded-[24px] border border-orange-100 shadow-sm flex flex-col overflow-hidden mb-10">
                      <table className="w-full text-left border-separate border-spacing-0">
                         <thead className="bg-slate-50">
@@ -1174,6 +1132,7 @@ export default function UserDashboard() {
                                             </div>
                                         </div>
                                     </td>
+                                    {/* Created By Column */}
                                     <td className="px-6 py-4">
                                          <div className="flex items-center gap-2">
                                             <div className="h-5 w-5 rounded-full bg-slate-100 flex items-center justify-center text-slate-500 text-[10px] font-bold">
@@ -1201,6 +1160,15 @@ export default function UserDashboard() {
                                                         className="w-full text-left px-3 py-2 hover:bg-blue-50 text-blue-600 text-xs flex items-center gap-2 font-medium"
                                                     >
                                                         <MessageSquare className="h-3 w-3" /> Chat
+                                                    </button>
+                                                    <button 
+                                                        onClick={() => { 
+                                                            setActiveFolderMenu(null);
+                                                            setActiveWorkspaceTab("links");
+                                                        }} 
+                                                        className="w-full text-left px-3 py-2 hover:bg-red-50 text-red-600 text-xs flex items-center gap-2 font-medium"
+                                                    >
+                                                        <Youtube className="h-3 w-3" /> YouTube
                                                     </button>
                                                     <div className="h-px bg-slate-100 my-1"></div>
                                                     <button className="w-full text-left px-3 py-2 hover:bg-slate-50 text-slate-400 hover:text-slate-600 text-xs flex items-center gap-2 font-medium">
@@ -1234,6 +1202,7 @@ export default function UserDashboard() {
             <p className="text-xs text-slate-500 mt-1">Manage and analyze external URLs for intelligence.</p>
          </div>
 
+         {/* Add Link Section */}
          <div className="bg-white rounded-[20px] p-5 shadow-sm border border-orange-100 mb-6 flex-shrink-0">
              <div className="flex flex-col xl:flex-row gap-4 items-end">
                  <div className="flex-1 w-full">
@@ -1251,6 +1220,7 @@ export default function UserDashboard() {
              </div>
          </div>
 
+         {/* Links Table */}
          <div className="flex-1 bg-white rounded-[24px] border border-orange-100 shadow-sm flex flex-col overflow-hidden">
              <div className="flex-1 overflow-y-auto min-h-0 relative">
                 <table className="w-full text-left border-separate border-spacing-0">
@@ -1280,6 +1250,7 @@ export default function UserDashboard() {
                                     </div>
                                 </td>
                                 
+                                {/* ACTIONS: Run OCR, View Content, Chat */}
                                 <td className="px-6 py-4 text-center">
                                     <div className="flex justify-center gap-2">
                                         {link.ocrStatus === 'pending' ? (
@@ -1312,6 +1283,7 @@ export default function UserDashboard() {
                                     </div>
                                 </td>
 
+                                {/* ORIGINAL LINK */}
                                 <td className="px-6 py-4 text-center">
                                     <Button 
                                         variant="ghost" 
@@ -1361,7 +1333,7 @@ export default function UserDashboard() {
                     <tbody className="divide-y divide-slate-50">
                         {paginatedFiles.map((file, i) => {
                             const fileFolder = folders.find(f => String(f.id) === String(file.folderId));
-                            const fileUrl = file.publicPath || "#";
+                            const fileUrl = file.publicPath ? (file.publicPath.startsWith('http') ? file.publicPath : `http://192.168.11.236:5000${file.publicPath}`) : "#";
                             return (
                             <tr key={file.id} className="group hover:bg-orange-50/30 transition-colors">
                                 <td className="px-4 py-2.5">
@@ -1427,6 +1399,7 @@ export default function UserDashboard() {
              {selectedFolder ? (
                  <div className="h-full grid grid-cols-1 lg:grid-cols-2 gap-6 min-h-0">
                      <div className="h-full flex flex-col min-h-0">
+                         {/* ATTRACTIVE UPLOAD SECTION */}
                          <motion.div 
                              whileHover={{ scale: 1.01, borderColor: "rgba(249, 115, 22, 0.5)" }}
                              whileTap={{ scale: 0.99 }}
@@ -1440,6 +1413,7 @@ export default function UserDashboard() {
                              onDrop={onDrop}
                              onClick={() => fileInputRef.current?.click()}
                          >
+                             {/* Decorative Background Elements */}
                              <div className="absolute inset-0 bg-gradient-to-br from-white via-transparent to-orange-50/50 opacity-50" />
                              <div className="absolute -top-10 -right-10 w-40 h-40 bg-orange-200/20 rounded-full blur-3xl group-hover:bg-orange-300/30 transition-colors" />
                              
@@ -1484,12 +1458,14 @@ export default function UserDashboard() {
          <div className="absolute inset-0 bg-[url('https://grainy-gradients.vercel.app/noise.svg')] opacity-20 mix-blend-overlay" />
       </div>
       
+      {/* Toast Notification */}
       {renderToast()}
 
       <AnimatePresence>
         {viewingFile && <FileViewerOverlay file={viewingFile} onClose={() => setViewingFile(null)} />}
         {showWorkspace && renderWorkspacePopup()}
         {showUploadModal && renderUploadModal()}
+        {/* Render New Chat and Text Viewer Overlays */}
         {activeChatLink && RenderChatOverlay()}
         {viewingTextLink && RenderTextViewer()}
       </AnimatePresence>
@@ -1511,18 +1487,7 @@ export default function UserDashboard() {
                     <GlowCard className="p-6 flex items-center justify-between"><div><p className="text-xs font-bold text-slate-400 uppercase tracking-wider">Analysis Score</p><h3 className="text-3xl font-black text-slate-800 mt-2">94.2%</h3><div className="flex items-center gap-1 text-xs font-bold text-emerald-600 mt-1"><ArrowUpRight className="h-3 w-3" /> +2.4% vs last week</div></div><div className="h-12 w-12 bg-emerald-50 rounded-2xl flex items-center justify-center text-emerald-600 shadow-sm"><Activity className="h-6 w-6" /></div></GlowCard>
                     <GlowCard className="p-6 flex items-center justify-between"><div><p className="text-xs font-bold text-slate-400 uppercase tracking-wider">Processing Vol</p><h3 className="text-3xl font-black text-slate-800 mt-2">{stats.processed} <span className="text-sm text-slate-400">docs</span></h3><div className="flex items-center gap-1 text-xs font-bold text-orange-600 mt-1"><Clock className="h-3 w-3" /> {stats.hoursSaved} hrs saved</div></div><div className="h-12 w-12 bg-orange-50 rounded-2xl flex items-center justify-center text-orange-600 shadow-sm"><Zap className="h-6 w-6" /></div></GlowCard>
                     <GlowCard className="p-6 flex items-center justify-between"><div><p className="text-xs font-bold text-slate-400 uppercase tracking-wider">Critical Flags</p><h3 className="text-3xl font-black text-slate-800 mt-2">3 <span className="text-sm text-slate-400 font-medium">Alerts</span></h3><p className="text-xs text-slate-400 mt-1">Legal compliance alerts</p></div><div className="h-12 w-12 bg-rose-50 rounded-2xl flex items-center justify-center text-rose-500 shadow-sm"><AlertCircle className="h-6 w-6" /></div></GlowCard>
-                    
-                    {/* UPDATED KPI CARD - REPLACED "GENERATE REPORT" */}
-                    <GlowCard className="p-6 flex items-center justify-between">
-                         <div>
-                            <p className="text-xs font-bold text-slate-400 uppercase tracking-wider">System Efficiency</p>
-                            <h3 className="text-3xl font-black text-slate-800 mt-2">{stats.systemHealth}%</h3>
-                            <p className="text-xs text-slate-400 mt-1">Operational status optimal</p>
-                         </div>
-                         <div className="h-12 w-12 bg-indigo-50 rounded-2xl flex items-center justify-center text-indigo-600 shadow-sm">
-                            <Cpu className="h-6 w-6" />
-                         </div>
-                    </GlowCard>
+                    <GlowCard className="p-0 border-none bg-gradient-to-br from-slate-900 to-slate-800 text-white flex flex-col justify-center items-center text-center cursor-pointer hover:scale-[1.02] transition-transform shadow-xl shadow-slate-900/20"><Sparkles className="h-8 w-8 text-yellow-400 mb-2" /><h3 className="font-bold text-lg">Generate Report</h3><p className="text-xs text-slate-400 mt-1">Create Summary PDF</p></GlowCard>
                 </div>
                 <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
                     <div className="lg:col-span-1">

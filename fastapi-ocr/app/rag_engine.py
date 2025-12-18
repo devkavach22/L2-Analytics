@@ -2,29 +2,46 @@
 
 import os
 import asyncio
+from concurrent.futures import ThreadPoolExecutor
 from pymongo import MongoClient
 from dotenv import load_dotenv
 
-# ---------------- EXISTING IMPORTS (UNCHANGED) ----------------
+# ---------------- EXISTING IMPORTS ----------------
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_mongodb import MongoDBAtlasVectorSearch
 
-# ---------------- NEW IMPORTS (RAG CHAIN ALIGNMENT) ----------------
+# ---------------- RAG CHAIN IMPORTS ----------------
 from langchain_huggingface import ChatHuggingFace, HuggingFaceEndpoint
 from langchain_core.prompts import PromptTemplate
 from langchain_core.output_parsers import StrOutputParser
+
+# ---------------- NEW IMPORT (REQUESTED) ----------------
+from langchain.chains import RetrievalQA
+
+# ---------------- OPENAI IMPORTS (OPTIONAL) ----------------
+try:
+    from langchain_openai import OpenAIEmbeddings, ChatOpenAI
+except ImportError:
+    OpenAIEmbeddings = None
+    ChatOpenAI = None
 
 load_dotenv()
 
 # =========================================================
 # 1. CONFIGURATION
 # =========================================================
+
+# Database Config
 MONGO_URL = os.getenv("MONGO_URL")
 DB_NAME = os.getenv("MONGO_DB_NAME")
 COLLECTION_NAME = "vector_store"
 INDEX_NAME = "vector_index"
 
+# OpenAI Configuration (Optional)
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+
+# Hugging Face / Model Config
 HUGGINGFACE_API_TOKEN = os.getenv("HUGGINGFACE_API_TOKEN")
 HUGGINGFACE_LLM_MODEL = os.getenv(
     "HUGGINGFACE_LLM_MODEL",
@@ -35,19 +52,33 @@ HUGGINGFACE_EMBEDDING_MODEL = os.getenv(
     "intfloat/e5-small-v2"
 )
 
+# Text Splitting Configuration
+CHUNK_SIZE = int(os.getenv("CHUNK_SIZE", 500))
+CHUNK_OVERLAP = int(os.getenv("CHUNK_OVERLAP", 100))
+
+# RAG & LLM Generation Configuration
+RETRIEVAL_K = int(os.getenv("RETRIEVAL_K", 4))
 LLM_TEMPERATURE = float(os.getenv("LLM_TEMPERATURE", 0.2))
 LLM_MAX_NEW_TOKENS = int(os.getenv("LLM_MAX_NEW_TOKENS", 512))
 
+# Initialize Mongo Client
 client = MongoClient(MONGO_URL)
 db = client[DB_NAME]
 vector_collection = db[COLLECTION_NAME]
 
 # =========================================================
-# 2. EMBEDDINGS & VECTOR STORE (UNCHANGED)
+# 2. EMBEDDINGS & VECTOR STORE
 # =========================================================
-embedding_model = HuggingFaceEmbeddings(
-    model_name=HUGGINGFACE_EMBEDDING_MODEL
-)
+
+def _get_embedding_model():
+    if OPENAI_API_KEY and OpenAIEmbeddings:
+        print("🔹 Using OpenAI Embeddings")
+        return OpenAIEmbeddings(openai_api_key=OPENAI_API_KEY)
+    
+    print(f"🔹 Using Hugging Face Embeddings: {HUGGINGFACE_EMBEDDING_MODEL}")
+    return HuggingFaceEmbeddings(model_name=HUGGINGFACE_EMBEDDING_MODEL)
+
+embedding_model = _get_embedding_model()
 
 def get_vector_store():
     return MongoDBAtlasVectorSearch(
@@ -58,67 +89,18 @@ def get_vector_store():
     )
 
 # =========================================================
-# 3. STORAGE (UNCHANGED)
-# =========================================================
-def store_embeddings(text_content, metadata):
-    if not text_content or len(text_content.strip()) < 10:
-        return None
-
-    splitter = RecursiveCharacterTextSplitter(
-        chunk_size=500,
-        chunk_overlap=100,
-        separators=["\n\n", "\n", ".", " ", ""]
-    )
-
-    docs = splitter.create_documents(
-        [text_content],
-        metadatas=[metadata]
-    )
-
-    store = get_vector_store()
-    store.add_documents(docs)
-    return True
-
-async def store_embeddings_async(text_content, metadata):
-    loop = asyncio.get_running_loop()
-    return await loop.run_in_executor(
-        None, store_embeddings, text_content, metadata
-    )
-
-# =========================================================
-# 4. RETRIEVAL (UNCHANGED)
-# =========================================================
-def retrieve_context(query, user_id, source=None, k=5):
-    store = get_vector_store()
-
-    filter_query = {"user_id": {"$eq": user_id}}
-
-    if source:
-        filter_query["source"] = {"$eq": source}
-
-    docs = store.similarity_search(
-        query,
-        k=k,
-        pre_filter=filter_query
-    )
-
-    if not docs:
-        return ""
-
-    return "\n\n".join(d.page_content for d in docs)
-
-async def retrieve_context_async(query, user_id, source=None, k=5):
-    loop = asyncio.get_running_loop()
-    return await loop.run_in_executor(
-        None, retrieve_context, query, user_id, source, k
-    )
-
-# =========================================================
-# 5. LLM INITIALIZATION (UNCHANGED)
+# 3. LLM INITIALIZATION
 # =========================================================
 def _initialize_llm():
+    if OPENAI_API_KEY and ChatOpenAI:
+        return ChatOpenAI(
+            openai_api_key=OPENAI_API_KEY,
+            model_name="gpt-4o-mini",
+            temperature=LLM_TEMPERATURE
+        )
+
     if not HUGGINGFACE_API_TOKEN:
-        raise ValueError("HUGGINGFACE_API_TOKEN missing")
+        raise ValueError("Neither OPENAI_API_KEY nor HUGGINGFACE_API_TOKEN found.")
 
     endpoint = HuggingFaceEndpoint(
         repo_id=HUGGINGFACE_LLM_MODEL,
@@ -129,8 +111,67 @@ def _initialize_llm():
     return ChatHuggingFace(llm=endpoint)
 
 # =========================================================
-# 6. ✅ NEW: VIDEO-AWARE RAG CHAT (ADDED)
+# 4. STORAGE
 # =========================================================
+def store_embeddings(text_content, metadata):
+    if not text_content or len(text_content.strip()) < 10:
+        return None
+
+    splitter = RecursiveCharacterTextSplitter(
+        chunk_size=CHUNK_SIZE,
+        chunk_overlap=CHUNK_OVERLAP,
+        separators=["\n\n", "\n", ".", " ", ""]
+    )
+
+    docs = splitter.create_documents([text_content], metadatas=[metadata])
+    store = get_vector_store()
+    store.add_documents(docs)
+    print(f"✔ RAG: Stored {len(docs)} chunks for source: {metadata.get('source', 'unknown')}")
+    return True
+
+async def store_embeddings_async(text_content, metadata):
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(None, store_embeddings, text_content, metadata)
+
+# =========================================================
+# 5. RETRIEVAL LOGIC (OPTIMIZED)
+# =========================================================
+
+def _fetch_docs(query, user_id, source=None, k=RETRIEVAL_K, strict_source=True):
+    """Internal helper to get raw documents."""
+    store = get_vector_store()
+    filter_query = {"user_id": {"$eq": user_id}}
+    
+    if strict_source and source:
+        filter_query["source"] = {"$eq": source}
+
+    # Optimization: Removing print statements for speed in production loop, or logging only important info
+    # print(f"🔍 Lookup: '{query[:10]}...' Strict: {strict_source}")
+
+    return store.similarity_search(query, k=k, pre_filter=filter_query)
+
+def generate_multi_queries(original_question, llm):
+    instruction = (
+        "Generate 3 alternative search queries for: \n"
+        f"{original_question}\n"
+        "Return one per line."
+    )
+    try:
+        raw = llm.invoke(instruction)
+        text = getattr(raw, "content", str(raw))
+        lines = [ln.strip("-• ").strip() for ln in text.splitlines()]
+        queries = [q for q in lines if q]
+    except Exception:
+        queries = []
+
+    queries.append(original_question)
+    # Deduplicate while preserving order
+    return list(dict.fromkeys(queries))
+
+# =========================================================
+# 6. CHAT FUNCTIONS (PERFORMANCE OPTIMIZED)
+# =========================================================
+
 def chat_with_video(
     question: str,
     user_id: str,
@@ -138,77 +179,364 @@ def chat_with_video(
     answer_language: str = "en",
     answer_tone: str = "neutral",
     answer_style: str = "auto",
-    k: int = 5,
+    use_multi_query: bool = False,
+    k: int = RETRIEVAL_K,
 ):
-    """
-    Chat with a specific video (URL or ID-based context).
-    Matches behavior of rag_chain.py + app.py
-    """
-
-    # Step 1: Retrieve video-specific context
-    context = retrieve_context(
-        query=question,
-        user_id=user_id,
-        source=video_url,
-        k=k,
-    )
-
-    if not context:
-        return "I don't have enough information from this video to answer that."
-
-    # Step 2: Initialize LLM
     llm = _initialize_llm()
 
-    # Step 3: Prompt (Aligned with rag_chain.py)
-    prompt = PromptTemplate(
-        template="""
-You are a helpful assistant that answers questions based ONLY on YouTube video transcripts.
+    # --- Step 1: Retrieval (Parallelized) ---
+    final_docs = []
+    queries = [question]
+    
+    # Only generate multi-queries if explicitly requested
+    if use_multi_query:
+        queries = generate_multi_queries(question, llm)
 
-Rules:
-- Use ONLY the provided context
-- If information is missing, say so clearly
-- Do NOT hallucinate
+    seen_contents = set()
 
-Language: {language}
-Tone: {tone}
-Style: {style}
+    def fetch_strict(q):
+        return _fetch_docs(q, user_id, source=video_url, k=k, strict_source=True)
 
-Context:
-{context}
+    def fetch_relaxed(q):
+        return _fetch_docs(q, user_id, source=None, k=k, strict_source=False)
 
-Question:
-{question}
+    # OPTIMIZATION: Run strict searches in parallel for all queries
+    with ThreadPoolExecutor() as executor:
+        strict_results = list(executor.map(fetch_strict, queries))
 
-Answer:
-""",
-        input_variables=[
-            "context",
-            "question",
-            "language",
-            "tone",
-            "style",
-        ],
-    )
+    # Flatten results
+    for docs in strict_results:
+        for doc in docs:
+            if doc.page_content not in seen_contents:
+                seen_contents.add(doc.page_content)
+                final_docs.append(doc)
 
+    # OPTIMIZATION: Only run relaxed search if Strict failed completely
+    if not final_docs and video_url:
+        print("⚠️ No strict matches. Parallel relaxed search...")
+        with ThreadPoolExecutor() as executor:
+            relaxed_results = list(executor.map(fetch_relaxed, queries))
+            
+        for docs in relaxed_results:
+            for doc in docs:
+                if doc.page_content not in seen_contents:
+                    seen_contents.add(doc.page_content)
+                    final_docs.append(doc)
+
+    if not final_docs:
+        return "I don't have enough information from the video transcript to answer that."
+
+    context = "\n\n".join(d.page_content for d in final_docs)
+
+    # --- Step 2: Generation ---
+    prompt_text = f"""
+            You are a helpful assistant. Answer ONLY based on the context.
+            Language: {answer_language}. Tone: {answer_tone}. Style: {answer_style}.
+
+            Context:
+            {{context}}
+
+            Question: {{question}}
+
+            Answer:
+            """
+
+    prompt = PromptTemplate(template=prompt_text, input_variables=["context", "question"])
     chain = prompt | llm | StrOutputParser()
 
-    return chain.invoke({
-        "context": context,
-        "question": question,
-        "language": answer_language,
-        "tone": answer_tone,
-        "style": answer_style,
-    })
+    return chain.invoke({"context": context, "question": question})
+
+# --- OPTION B: RetrievalQA Chain ---
+def chat_using_retrieval_qa(question: str, user_id: str, video_url: str):
+    llm = _initialize_llm()
+    store = get_vector_store()
+    
+    retriever = store.as_retriever(
+        search_type="similarity",
+        search_kwargs={
+            "k": RETRIEVAL_K,
+            "pre_filter": {"user_id": {"$eq": user_id}, "source": {"$eq": video_url}}
+        }
+    )
+
+    qa_chain = RetrievalQA.from_chain_type(
+        llm=llm,
+        chain_type="stuff",
+        retriever=retriever,
+        return_source_documents=True
+    )
+    result = qa_chain.invoke({"query": question})
+    return result["result"]
 
 # =========================================================
-# 7. ASYNC VERSION (OPTIONAL ORCHESTRATION)
+# 7. ASYNC ORCHESTRATION
 # =========================================================
 async def chat_with_video_async(*args, **kwargs):
     loop = asyncio.get_running_loop()
-    return await loop.run_in_executor(
-        None, chat_with_video, *args, **kwargs
-    )
+    return await loop.run_in_executor(None, chat_with_video, *args, **kwargs)
 
+# # app/rag_engine.py
+
+# import os
+# import asyncio
+# from pymongo import MongoClient
+# from dotenv import load_dotenv
+
+# # ---------------- EXISTING IMPORTS ----------------
+# from langchain_huggingface import HuggingFaceEmbeddings
+# from langchain_text_splitters import RecursiveCharacterTextSplitter
+# from langchain_mongodb import MongoDBAtlasVectorSearch
+
+# # ---------------- RAG CHAIN IMPORTS ----------------
+# from langchain_huggingface import ChatHuggingFace, HuggingFaceEndpoint
+# from langchain_core.prompts import PromptTemplate
+# from langchain_core.output_parsers import StrOutputParser
+
+# load_dotenv()
+
+# # =========================================================
+# # 1. CONFIGURATION
+# # =========================================================
+# MONGO_URL = os.getenv("MONGO_URL")
+# DB_NAME = os.getenv("MONGO_DB_NAME")
+# COLLECTION_NAME = "vector_store"
+# INDEX_NAME = "vector_index"
+
+# HUGGINGFACE_API_TOKEN = os.getenv("HUGGINGFACE_API_TOKEN")
+# HUGGINGFACE_LLM_MODEL = os.getenv(
+#     "HUGGINGFACE_LLM_MODEL",
+#     "meta-llama/Llama-3.1-8B-Instruct"
+# )
+# HUGGINGFACE_EMBEDDING_MODEL = os.getenv(
+#     "HUGGINGFACE_EMBEDDING_MODEL",
+#     "intfloat/e5-small-v2"
+# )
+
+# LLM_TEMPERATURE = float(os.getenv("LLM_TEMPERATURE", 0.2))
+# LLM_MAX_NEW_TOKENS = int(os.getenv("LLM_MAX_NEW_TOKENS", 512))
+
+# client = MongoClient(MONGO_URL)
+# db = client[DB_NAME]
+# vector_collection = db[COLLECTION_NAME]
+
+# # =========================================================
+# # 2. EMBEDDINGS & VECTOR STORE
+# # =========================================================
+# embedding_model = HuggingFaceEmbeddings(
+#     model_name=HUGGINGFACE_EMBEDDING_MODEL
+# )
+
+# def get_vector_store():
+#     return MongoDBAtlasVectorSearch(
+#         collection=vector_collection,
+#         embedding=embedding_model,
+#         index_name=INDEX_NAME,
+#         relevance_score_fn="cosine",
+#     )
+
+# # =========================================================
+# # 3. LLM INITIALIZATION
+# # =========================================================
+# def _initialize_llm():
+#     if not HUGGINGFACE_API_TOKEN:
+#         raise ValueError("HUGGINGFACE_API_TOKEN missing")
+
+#     endpoint = HuggingFaceEndpoint(
+#         repo_id=HUGGINGFACE_LLM_MODEL,
+#         huggingfacehub_api_token=HUGGINGFACE_API_TOKEN,
+#         temperature=LLM_TEMPERATURE,
+#         max_new_tokens=LLM_MAX_NEW_TOKENS,
+#     )
+#     return ChatHuggingFace(llm=endpoint)
+
+# # =========================================================
+# # 4. STORAGE
+# # =========================================================
+# def store_embeddings(text_content, metadata):
+#     if not text_content or len(text_content.strip()) < 10:
+#         return None
+
+#     splitter = RecursiveCharacterTextSplitter(
+#         chunk_size=500,
+#         chunk_overlap=100,
+#         separators=["\n\n", "\n", ".", " ", ""]
+#     )
+
+#     docs = splitter.create_documents(
+#         [text_content],
+#         metadatas=[metadata]
+#     )
+
+#     store = get_vector_store()
+#     store.add_documents(docs)
+#     return True
+
+# async def store_embeddings_async(text_content, metadata):
+#     loop = asyncio.get_running_loop()
+#     return await loop.run_in_executor(
+#         None, store_embeddings, text_content, metadata
+#     )
+
+# # =========================================================
+# # 5. RETRIEVAL LOGIC
+# # =========================================================
+
+# def _fetch_docs(query, user_id, source=None, k=5):
+#     """
+#     Internal helper to get raw documents. 
+#     Used by both simple retrieval and multi-query logic.
+#     """
+#     store = get_vector_store()
+
+#     filter_query = {"user_id": {"$eq": user_id}}
+
+#     if source:
+#         filter_query["source"] = {"$eq": source}
+
+#     # Perform similarity search
+#     return store.similarity_search(
+#         query,
+#         k=k,
+#         pre_filter=filter_query
+#     )
+
+# def generate_multi_queries(original_question, llm):
+#     """
+#     Generates alternative search queries using the LLM to improve retrieval coverage.
+#     """
+#     instruction = (
+#         "Generate 3 alternative search queries that would help retrieve transcript "
+#         "segments relevant to answering the following question about a YouTube video. "
+#         "Return only the queries, one per line, without numbering or bullets.\n\n"
+#         f"Original question:\n{original_question}"
+#     )
+
+#     try:
+#         raw = llm.invoke(instruction)
+#         # Handle different response types (content attribute vs string)
+#         text = getattr(raw, "content", str(raw))
+#         lines = [ln.strip("-• ").strip() for ln in text.splitlines()]
+#         queries = [q for q in lines if q]
+#     except Exception:
+#         # Fallback to empty list if LLM fails
+#         queries = []
+
+#     # Always include the original question
+#     queries.append(original_question)
+
+#     # Deduplicate preserving order
+#     seen = set()
+#     unique_queries = []
+#     for q in queries:
+#         if q not in seen:
+#             seen.add(q)
+#             unique_queries.append(q)
+
+#     return unique_queries
+
+# def retrieve_context(query, user_id, source=None, k=5):
+#     """
+#     Standard retrieval returning a string (backward compatibility).
+#     """
+#     docs = _fetch_docs(query, user_id, source, k)
+#     if not docs:
+#         return ""
+#     return "\n\n".join(d.page_content for d in docs)
+
+# async def retrieve_context_async(query, user_id, source=None, k=5):
+#     loop = asyncio.get_running_loop()
+#     return await loop.run_in_executor(
+#         None, retrieve_context, query, user_id, source, k
+#     )
+
+# # =========================================================
+# # 6. VIDEO-AWARE RAG CHAT
+# # =========================================================
+# def chat_with_video(
+#     question: str,
+#     user_id: str,
+#     video_url: str,
+#     answer_language: str = "en",
+#     answer_tone: str = "neutral",
+#     answer_style: str = "auto",
+#     use_multi_query: bool = False,
+#     k: int = 5,
+# ):
+#     """
+#     Chat with a specific video using RAG.
+#     """
+#     llm = _initialize_llm()
+
+#     # --- Step 1: Retrieval (Simple vs Multi-Query) ---
+#     final_docs = []
+    
+#     if use_multi_query:
+#         # Generate variations
+#         queries = generate_multi_queries(question, llm)
+#         seen_contents = set()
+        
+#         for q in queries:
+#             docs = _fetch_docs(q, user_id, source=video_url, k=k)
+#             for doc in docs:
+#                 content = getattr(doc, "page_content", "")
+#                 if content and content not in seen_contents:
+#                     seen_contents.add(content)
+#                     final_docs.append(doc)
+#     else:
+#         # Standard single query
+#         final_docs = _fetch_docs(question, user_id, source=video_url, k=k)
+
+#     if not final_docs:
+#         return "I don't have enough information from this video to answer that."
+
+#     # Format context
+#     context = "\n\n".join(d.page_content for d in final_docs)
+
+#     # --- Step 2: Generation ---
+#     prompt = PromptTemplate(
+#         template="""
+#             You are a helpful assistant that answers questions based on YouTube video transcripts.
+#             Answer ONLY from the provided transcript context.
+#             If the context is insufficient to answer the question, politely say that you don't have enough information.
+
+#             You must answer in the language: {language}
+#             Your tone should be: {tone}
+#             Your answer style should be: {style}
+
+#             Context:
+#             {context}
+
+#             Question: {question}
+
+#             Answer:
+# """,
+#         input_variables=[
+#             "context",
+#             "question",
+#             "language",
+#             "tone",
+#             "style",
+#         ],
+#     )
+
+#     chain = prompt | llm | StrOutputParser()
+
+#     return chain.invoke({
+#         "context": context,
+#         "question": question,
+#         "language": answer_language,
+#         "tone": answer_tone,
+#         "style": answer_style,
+#     })
+
+# # =========================================================
+# # 7. ASYNC ORCHESTRATION
+# # =========================================================
+# async def chat_with_video_async(*args, **kwargs):
+#     loop = asyncio.get_running_loop()
+#     return await loop.run_in_executor(
+#         None, chat_with_video, *args, **kwargs
+#     )
 
 
 # # app/rag_engine.py
