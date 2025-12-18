@@ -1,4 +1,5 @@
 import User from "../models/Users.js";
+import Link from "../models/Link.js";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import { sendEmail } from "../services/mailServices.js";
@@ -86,4 +87,15 @@ export const changePassword = async (req, res) => {
     } catch (err) {
         return res.status(500).json({ error: err.message });
     }
+};
+//=========================== Links Add & Get User Link ==========================
+
+export const getUserLinks = async (req, res) => {
+    try {
+        const userId = req.user.id;
+        const links = await Link.find({userId}).sort({ createdAt: -1 });
+        res.json({ links });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }   
 };

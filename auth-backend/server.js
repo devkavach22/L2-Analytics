@@ -9,11 +9,17 @@ import searchRoutes from "./routes/searchRoutes.js";
 import passwordRoutes from "./routes/passwordRoutes.js"; // Import password routes
 import { runIndexingPipeline } from "./search/indexingPipeline.js";
 import path from "path";
+import fs from "fs";
 
 dotenv.config();
 
 const app = express();
 
+const reportsDir = path.join(process.cwd(), 'generated_reports');
+if (!fs.existsSync(reportsDir)) {
+    fs.mkdirSync(reportsDir);
+    console.log("Created directory: generated_reports");
+}
 
 const MONGO_URL = process.env.MONGO_URL;
 const FRONTEND_URL = process.env.FRONTEND_URL;
