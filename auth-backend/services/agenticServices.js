@@ -1,3 +1,4 @@
+// import { responsiveArray } from "antd/es/_util/responsiveObserver";
 import axios from "axios";
 
 /**
@@ -10,13 +11,12 @@ import axios from "axios";
  */
 export async function generateAgenticReport(userId, reportType, keyword = null, newFileText = null) {
   try {
-    // UPDATED PAYLOAD: Matches the Python Orchestrator's expectations
-    // It distinguishes between searching history ('keyword') and analyzing new content ('new_file_text')
+    // Payload matching Python Orchestrator expectations
     const payload = {
       user_id: userId,
       report_type: reportType,
-      keyword: keyword,        // Used by Python to search MongoDB context
-      new_file_text: newFileText // Used by Python to merge new data with historical data
+      keyword,        
+      new_file_text: newFileText 
     };
 
     // Using Port 5000 as explicitly requested
@@ -25,25 +25,72 @@ export async function generateAgenticReport(userId, reportType, keyword = null, 
       payload,
       {
         headers: { "Content-Type": "application/json" },
-        // Increased timeout to 5 minutes for complex Agentic Analysis + Chart Generation
+        // Infinite timeout for complex Agentic Analysis
         timeout: 0
       }
     );
 
     // Check if response is successful
     if (!response.data) {
-      throw new Error("No response from Agentic Report service");
+      throw new Error("No response data from Agentic Report service");
     }
 
-    return response.data;
-  } catch (error) {
-    console.error("Error calling Agentic Report service:", error.message);
-    
-    // Better error handling for connection refused (server down)
-    if (error.code === 'ECONNREFUSED') {
-       throw new Error("Python AI Service is unreachable at http://127.0.0.1:5000. Is the server running?");
+    if (response.data.success === false)
+    {
+      throw new Error(response.data.error || "Agentic report failed");
     }
-    
-    throw new Error(error.response?.data?.error || error.message || "Agentic report failed");
+
+    return  {
+      success: true,
+      report: response.data.report || response.data.final_report_text,
+      final_report_text: response.data.final_report_text,
+      download_link: response.data.download_link,
+      meta: {
+        keywords: response.data.keywords,
+        trends: response.data.trends,
+        risks: response.data.risks,
+        sentiment: response.data.sentiment,
+        cognitive: response.data.cognitive,
+        decisions: response.data.decisions
+      }
+    };
+
+    // return response.data;
+  } catch (error) {
+    if (error.code === "ECONNREFUSED") {
+      console.error("❌ Python Service Unreachable");
+      throw new Error("Python Agentic Service is not running");
+    }
+
+    // Python returned an error
+    if (error.response?.data) {
+      console.error(
+        `❌ Python Service Error (${error.response.status}):`,
+        error.response.data
+      );
+      throw new Error(
+        error.response.data.error || "Agentic report generation failed"
+      );
+    }
+
+    console.error("❌ Agentic Service Error:", error.message);
+    throw new Error(error.message);
   }
+  //   // 1. Check if the Python Server is unreachable
+  //   if (error.code === 'ECONNREFUSED') {
+  //      console.error("❌ Python Service Unreachable");
+  //      throw new Error("Python AI Service is unreachable at http://127.0.0.1:5000. Is the server running?");
+  //   }
+    
+  //   // 2. Check if Python Server sent a specific error message (e.g., 'report is undefined')
+  //   if (error.response && error.response.data) {
+  //       const pythonError = error.response.data.error || JSON.stringify(error.response.data);
+  //       console.error(`❌ Python Service Error (${error.response.status}):`, pythonError);
+  //       throw new Error(pythonError); 
+  //   }
+
+  //   // 3. Fallback generic error
+  //   console.error("Error calling Agentic Report service:", error.message);
+  //   throw new Error(error.message || "Agentic report failed");
+  // }
 }

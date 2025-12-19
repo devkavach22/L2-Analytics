@@ -58,7 +58,13 @@ def start_ollama_server():
 # FASTAPI INITIALIZATION
 # ------------------------------------------------------------
 app = FastAPI(title="AI Microservice")
-app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"], 
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 @app.on_event("startup")
 async def startup_event():
@@ -195,7 +201,6 @@ class ReportRequest(BaseModel):
 async def agentic_report(req: ReportRequest):
     """
     Runs full Agentic AI pipeline.
-    Now accepts 'new_file_text' directly from Node.js so we don't rely solely on DB.
     """
     try:
         pipeline = AgenticReportPipeline()
@@ -205,10 +210,10 @@ async def agentic_report(req: ReportRequest):
             keyword=req.keyword,
             new_file_text=req.new_file_text
         )
-
         return JSONResponse(content=result)
 
     except Exception as e:
+        traceback.print_exc()
         return JSONResponse(
             {"success": False, "error": str(e)},
             status_code=500

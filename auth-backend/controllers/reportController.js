@@ -88,6 +88,11 @@ export const analyzeReport = async (req, res) => {
       else {
         // Run OCR if new
         console.log(`❌ New File. Starting OCR...`);
+        
+        if (!file.path) {
+            return res.status(400).json({ msg: "File upload failed: No path received." });
+        }
+
         extractedText = await sendToOCR(file.path);
 
         if (!extractedText || extractedText.trim().length === 0) {
@@ -118,8 +123,7 @@ export const analyzeReport = async (req, res) => {
       userId,
       finalReportType,
       keyword || null,
-      extractedText,
-      // sourceFilename
+      extractedText
     );
 
     if (!agenticResponse || agenticResponse.success === false) {
@@ -135,16 +139,19 @@ export const analyzeReport = async (req, res) => {
     // =========================================================
     const insight = agenticResponse.collection_insight || {};
 
-    // Get filename from Python response (e.g., "report_123.pdf")
+    // Safety: Check if download_link exists before processing
     let filename = agenticResponse.download_link;
-    
-    // Clean up if it returns a full path, we just want the name for the API URL
-    if (filename.includes("/")) {
-        filename = path.basename(filename);
-    }
+    let secureUrl = "";
 
-    // Create the download URL pointing to YOUR backend endpoint
-    const secureUrl = `/api/pdf/download/${filename}`;
+    if (filename) {
+        // Clean up if it returns a full path, we just want the name for the API URL
+        if (filename.includes("/") || filename.includes("\\")) {
+            filename = path.basename(filename);
+        }
+        secureUrl = `/api/pdf/download/${filename}`;
+    } else {
+        console.warn("⚠️ Warning: No download link returned from AI Service.");
+    }
 
     const newAnalysisReport = new AnalysisReport({
       userId: userId,
@@ -172,7 +179,9 @@ export const analyzeReport = async (req, res) => {
 
   } catch (err) {
     console.error("❌ Controller Error:", err.message);
-    res.status(500).json({ msg: "Server Error", error: err.message });
+    // Explicitly showing err.response.data if available (from axios errors)
+    const errorDetails = err.response?.data || err.message;
+    res.status(500).json({ msg: "Server Error", error: errorDetails });
   }
 };
 
@@ -185,8 +194,6 @@ export const downloadReport = async (req, res) => {
     }
     
     // Ensure this matches where Python saves the PDF
-    // 'process.cwd()' is usually the root of your Node project.
-    // Ensure "static/outputs" exists in your root.
     const reportsDir = path.join(process.cwd(), "static/outputs"); 
     const filePath = path.join(reportsDir, filename);
 

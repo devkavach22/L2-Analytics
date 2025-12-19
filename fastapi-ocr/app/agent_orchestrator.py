@@ -22,8 +22,6 @@ from .tools.llm_loader import load_llm
 from .nlp_pipeline import clean_text
 from .ocr_utils import save_pdf
 from .generators.chart_generator import generate_chart
-
-# NEW Generator for HTML Templates
 from .generators.report_generator import render_html_report
 
 from langchain_core.prompts import PromptTemplate
@@ -88,6 +86,7 @@ class AgenticReportPipeline:
             last_record = self.collection.find_one({"userId": user_query}, sort=[("_id", -1)])
             if last_record and "extractedText" in last_record:
                 current_text = last_record["extractedText"]
+                print(f"✔ Found text in DB: {last_record.get('fileName')}")
             else:
                 return {"success": False, "error": "No text available for analysis."}
 
@@ -96,31 +95,27 @@ class AgenticReportPipeline:
         if keyword:
             cursor = self.collection.find(
                 {"userId": user_query, "extractedText": {"$regex": keyword, "$options": "i"}}
-            ).limit(5) # Optimization: Limit history to 5 most recent to save tokens/time
+            ).limit(5)
             docs = list(cursor)
             if docs: 
-                history_text = "\n".join([d.get('extractedText', '')[:2000] for d in docs]) # Limit history chunk size
+                history_text = "\n".join([d.get('extractedText', '')[:2000] for d in docs])
 
         full_context = f"{current_text}\n{history_text}"
-        
-        # Optimization: Clean text once, limit size for speed
-        cleaned_text = clean_text(full_context)[:12000] # Reduced slightly for speed
+        cleaned_text = clean_text(full_context)[:12000]
         
         # =========================================================
-        # STEP 2: PARALLEL AGENT EXECUTION (OPTIMIZED)
+        # STEP 2: PARALLEL AGENT EXECUTION
         # =========================================================
         print("⚡ Running Analysis Agents in Parallel...")
         
         results = {}
         doc_identity = "Document"
 
-        # We maximize parallelism by putting EVERYTHING in the executor
         with concurrent.futures.ThreadPoolExecutor() as executor:
-            # 1. Start Document ID Task (Non-blocking now)
+            # 1. Start Document ID Task
             f_id = executor.submit(self._identify_document, cleaned_text)
             
-            # 2. Start Analytical Agents immediately (using cleaned_text directly)
-            # Note: We pass cleaned_text directly to avoid waiting for doc ID
+            # 2. Start Analytical Agents
             f_sum = executor.submit(self.summarizer.run, cleaned_text)
             f_key = executor.submit(self.keyword_agent.run, cleaned_text)
             f_dec = executor.submit(self.decision_agent.run, cleaned_text)
@@ -129,14 +124,17 @@ class AgenticReportPipeline:
             f_sen = executor.submit(self.sentiment_agent.run, cleaned_text)
             f_cog = executor.submit(self.cognitive_agent.run, cleaned_text)
             
-            # 3. Chart Generation (Conditional)
+            # 3. Chart Generation
             f_chart = None
             if len(cleaned_text) > 200:
                 f_chart = executor.submit(self.data_extractor.run, cleaned_text, keyword or "Metrics")
 
-            # 4. Gather Results as they complete
-            doc_identity = f_id.result() # Wait for ID here, but others are already running
-            
+            # 4. Gather Results
+            try:
+                doc_identity = f_id.result() 
+            except Exception:
+                pass
+
             results = {
                 "summary": self._clean_llm_output(f_sum.result()),
                 "keywords": f_key.result(),
@@ -149,15 +147,40 @@ class AgenticReportPipeline:
             }
             
             if f_chart:
-                chart_raw = f_chart.result()
-                if chart_raw and chart_raw.get("values"):
-                    results["chart_path"] = os.path.abspath(generate_chart(chart_raw))
+                try:
+                    chart_raw = f_chart.result()
+                    if chart_raw and chart_raw.get("values"):
+                        results["chart_path"] = os.path.abspath(generate_chart(chart_raw))
+                except Exception:
+                    pass
 
         print("✔ All Agents Finished.")
 
         # =========================================================
-        # STEP 3: GENERATE HTML/PDF REPORT
+        # STEP 3: FORMAT & GENERATE REPORT
         # =========================================================
+        print("📝 Formatting Final Report...")
+        
+        report_text = "" # FIX: Initialize variable to avoid 'undefined' errors
+        
+        try:
+            raw_report = self.format_agent.run(
+                summary=results["summary"],
+                keywords=results["keywords"],
+                trends=results["trends"],
+                decisions=results["decisions"],
+                report_type=report_type
+            )
+            report_text = self._clean_llm_output(raw_report)
+        except Exception as e:
+            print(f"⚠ Formatting failed: {e}")
+            report_text = results["summary"]
+
+        # FIX: Ensure "report" key exists for the API response
+        results["report"] = report_text 
+        results["final_report_text"] = report_text
+
+        # Generate HTML/PDF
         download_link = render_html_report(results, report_type, user_id)
 
         return {
@@ -170,7 +193,8 @@ class AgenticReportPipeline:
             "risks": results["risks"],
             "sentiment": results["sentiment"],
             "cognitive": results["cognitive"],
-            "final_report_text": "PDF Generated Successfully via Templates",
+            "final_report_text": report_text, 
+            "report": report_text, # <--- CRITICAL FIX for 'report is undefined'
             "download_link": download_link
         }
 

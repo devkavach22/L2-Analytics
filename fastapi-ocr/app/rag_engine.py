@@ -49,7 +49,7 @@ HUGGINGFACE_LLM_MODEL = os.getenv(
 )
 HUGGINGFACE_EMBEDDING_MODEL = os.getenv(
     "HUGGINGFACE_EMBEDDING_MODEL",
-    "intfloat/e5-small-v2"
+    "sentence-transformers/all-MiniLM-L6-v2"
 )
 
 # Text Splitting Configuration
@@ -59,7 +59,7 @@ CHUNK_OVERLAP = int(os.getenv("CHUNK_OVERLAP", 100))
 # RAG & LLM Generation Configuration
 RETRIEVAL_K = int(os.getenv("RETRIEVAL_K", 4))
 LLM_TEMPERATURE = float(os.getenv("LLM_TEMPERATURE", 0.2))
-LLM_MAX_NEW_TOKENS = int(os.getenv("LLM_MAX_NEW_TOKENS", 512))
+LLM_MAX_NEW_TOKENS = int(os.getenv("LLM_MAX_NEW_TOKENS", 384))
 
 # Initialize Mongo Client
 client = MongoClient(MONGO_URL)
@@ -251,7 +251,7 @@ def generate_rag_report(
     topic: str,
     user_id: str,
     report_format: str = "detailed", # e.g., 'summary', 'detailed', 'analytical'
-    k: int = 8  # Use a higher K for reports to gather more context
+    k: int = 4  # Use a higher K for reports to gather more context
 ):
     """
     Generates a structured report based on ALL documents/videos for a specific user.
