@@ -3,6 +3,7 @@ import Link from "../models/Link.js";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import { sendEmail } from "../services/mailServices.js";
+// import { withSuccess } from "antd/es/modal/confirm.js";
 
 // ====================== REGISTER ===========================
 export const register = async (req, res) => {
@@ -93,8 +94,12 @@ export const changePassword = async (req, res) => {
 export const getUserLinks = async (req, res) => {
     try {
         const userId = req.user.id;
-        const links = await Link.find({userId}).sort({ createdAt: -1 });
-        res.json({ links });
+        const links = await Link.find({userId}).select('url status createdAt extractedText').sort({ createdAt: -1 });
+        res.json({ 
+            success: true,
+            count: links.length,
+            links
+         });
     } catch (error) {
         res.status(500).json({ error: error.message });
     }   

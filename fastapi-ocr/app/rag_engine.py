@@ -36,7 +36,7 @@ load_dotenv()
 MONGO_URL = os.getenv("MONGO_URL")
 DB_NAME = os.getenv("MONGO_DB_NAME")
 COLLECTION_NAME = "vector_store"
-INDEX_NAME = "vector_index"
+INDEX_NAME = "universal_index"
 
 # OpenAI Configuration (Optional)
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
@@ -142,11 +142,10 @@ def _fetch_docs(query, user_id, source=None, k=RETRIEVAL_K, strict_source=True):
     store = get_vector_store()
     filter_query = {"user_id": {"$eq": user_id}}
     
+    # If a source is provided and we are in strict mode, filter by it.
+    # If source is None, we do NOT filter by source (Global Search).
     if strict_source and source:
         filter_query["source"] = {"$eq": source}
-
-    # Optimization: Removing print statements for speed in production loop, or logging only important info
-    # print(f"🔍 Lookup: '{query[:10]}...' Strict: {strict_source}")
 
     return store.similarity_search(query, k=k, pre_filter=filter_query)
 
@@ -169,7 +168,7 @@ def generate_multi_queries(original_question, llm):
     return list(dict.fromkeys(queries))
 
 # =========================================================
-# 6. CHAT FUNCTIONS (PERFORMANCE OPTIMIZED)
+# 6. CHAT & REPORT FUNCTIONS
 # =========================================================
 
 def chat_with_video(
@@ -211,7 +210,7 @@ def chat_with_video(
                 seen_contents.add(doc.page_content)
                 final_docs.append(doc)
 
-    # OPTIMIZATION: Only run relaxed search if Strict failed completely
+    # OPTIMIZATION: Only run relaxed search if Strict failed completely and we have a specific video_url
     if not final_docs and video_url:
         print("⚠️ No strict matches. Parallel relaxed search...")
         with ThreadPoolExecutor() as executor:
@@ -246,7 +245,75 @@ def chat_with_video(
 
     return chain.invoke({"context": context, "question": question})
 
-# --- OPTION B: RetrievalQA Chain ---
+
+# --- NEW: REPORT GENERATION FUNCTION ---
+def generate_rag_report(
+    topic: str,
+    user_id: str,
+    report_format: str = "detailed", # e.g., 'summary', 'detailed', 'analytical'
+    k: int = 8  # Use a higher K for reports to gather more context
+):
+    """
+    Generates a structured report based on ALL documents/videos for a specific user.
+    Unlike chat_with_video, this does NOT filter by a specific source URL.
+    """
+    llm = _initialize_llm()
+
+    # 1. Generate Multi-Queries for broad coverage
+    queries = generate_multi_queries(topic, llm)
+    
+    final_docs = []
+    seen_contents = set()
+
+    # 2. Retrieval: Fetch documents from ALL sources (source=None)
+    def fetch_global(q):
+        # strict_source=False ensures we ignore any source filtering
+        return _fetch_docs(q, user_id, source=None, k=k, strict_source=False)
+
+    with ThreadPoolExecutor() as executor:
+        results = list(executor.map(fetch_global, queries))
+
+    for docs in results:
+        for doc in docs:
+            if doc.page_content not in seen_contents:
+                seen_contents.add(doc.page_content)
+                final_docs.append(doc)
+
+    if not final_docs:
+        return "Insufficient data found in your knowledge base to generate a report on this topic."
+
+    context = "\n\n".join(d.page_content for d in final_docs)
+
+    # 3. Report Generation
+    prompt_text = f"""
+    You are an expert AI Analyst. 
+    Create a {report_format} report on the topic: "{{topic}}".
+    
+    Base your report ONLY on the following Context retrieved from the user's knowledge base.
+    If the context is unrelated to the topic, mention that data is missing.
+
+    Context:
+    {{context}}
+
+    Report Structure:
+    1. Executive Summary
+    2. Key Findings & Insights
+    3. Detailed Analysis
+    4. Conclusion / Next Steps
+
+    Format the output in clean Markdown.
+    """
+
+    prompt = PromptTemplate(
+        template=prompt_text, 
+        input_variables=["context", "topic"]
+    )
+    chain = prompt | llm | StrOutputParser()
+
+    return chain.invoke({"context": context, "topic": topic})
+
+
+# --- OPTION B: RetrievalQA Chain (Existing) ---
 def chat_using_retrieval_qa(question: str, user_id: str, video_url: str):
     llm = _initialize_llm()
     store = get_vector_store()
@@ -274,6 +341,10 @@ def chat_using_retrieval_qa(question: str, user_id: str, video_url: str):
 async def chat_with_video_async(*args, **kwargs):
     loop = asyncio.get_running_loop()
     return await loop.run_in_executor(None, chat_with_video, *args, **kwargs)
+
+async def generate_rag_report_async(*args, **kwargs):
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(None, generate_rag_report, *args, **kwargs)
 
 # # app/rag_engine.py
 

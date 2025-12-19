@@ -140,6 +140,7 @@ type ChatMessageType = {
     role: 'user' | 'assistant';
     content: string;
     timestamp: Date;
+    isLoading?: boolean;
 };
 
 // --- MOCK AI DATA ---
@@ -347,19 +348,34 @@ export default function UserDashboard() {
         const myFiles = transformFiles(rawFiles, myFolders).filter((f: any) => f.userId === uid).reverse();
         setAllFiles(myFiles);
 
-        // 3. Map Links
+        // 3. Map Links - FILTERED FOR COMPLETED AND UNIQUE
         const rawLinks = linksRes.data.links || linksRes.data || [];
-        const myLinks = Array.isArray(rawLinks) ? rawLinks.map((l: any) => ({
-             id: l._id || l.id,
-             url: l.url,
-             title: l.title || l.url,
-             status: l.status || 'completed',
-             createdAt: l.createdAt,
-             ocrStatus: l.ocrStatus || 'pending', // Default to pending if missing
-             extractedText: l.extractedText || "Mock extracted text: This is content extracted from the URL...",
-             translatedText: l.translatedText || "",
-             originalUrl: l.url
-        })) : [];
+        let myLinks = [];
+        
+        if (Array.isArray(rawLinks)) {
+            // Filter only completed links first
+            const completedLinks = rawLinks.filter((l: any) => l.status === 'completed');
+            
+            // Remove duplicates (keep the latest one based on URL)
+            const uniqueLinkMap = new Map();
+            completedLinks.forEach((l: any) => {
+                uniqueLinkMap.set(l.url, l);
+            });
+            
+            const uniqueLinks = Array.from(uniqueLinkMap.values());
+
+            myLinks = uniqueLinks.map((l: any) => ({
+                id: l._id || l.id,
+                url: l.url,
+                title: l.title || l.url,
+                status: l.status || 'completed',
+                createdAt: l.createdAt,
+                ocrStatus: l.ocrStatus || 'pending', 
+                extractedText: l.extractedText || "Mock extracted text: This is content extracted from the URL...",
+                translatedText: l.translatedText || "",
+                originalUrl: l.url
+            }));
+        }
         setLinks(myLinks.reverse());
 
         // 4. Update File Counts inside Folders
@@ -528,22 +544,61 @@ export default function UserDashboard() {
   };
 
   const handleSendChatMessage = async () => {
-      if(!chatInput.trim() || !activeChatLink) return;
-      
-      const userMsg: ChatMessageType = { id: Date.now().toString(), role: 'user', content: chatInput, timestamp: new Date() };
-      setChatMessages(prev => [...prev, userMsg]);
-      setChatInput("");
+    if(!chatInput.trim() || !activeChatLink) return;
+    
+    // 1. Add User Message
+    const userMsg: ChatMessageType = { id: Date.now().toString(), role: 'user', content: chatInput, timestamp: new Date() };
+    setChatMessages(prev => [...prev, userMsg]);
+    
+    const currentQuestion = chatInput;
+    setChatInput(""); // Clear Input
 
-      // Simulate AI response
-      setTimeout(() => {
-          const aiMsg: ChatMessageType = { 
-              id: (Date.now() + 1).toString(), 
-              role: 'assistant', 
-              content: `This is a simulated response regarding "${activeChatLink.title}". I found relevant information about your query in the document.`, 
-              timestamp: new Date() 
-          };
-          setChatMessages(prev => [...prev, aiMsg]);
-      }, 1000);
+    // 2. Add Loading Indicator
+    const loadingId = "loading-" + Date.now();
+    const loadingMsg: ChatMessageType = { 
+        id: loadingId, 
+        role: 'assistant', 
+        content: "Analyzing content...", 
+        timestamp: new Date(),
+        isLoading: true 
+    };
+    setChatMessages(prev => [...prev, loadingMsg]);
+
+    try {
+        // 3. Prepare Payload & Headers
+        const token = localStorage.getItem("token"); // Get token from local storage
+        const payload = {
+            question: currentQuestion,
+            link: activeChatLink.url
+        };
+
+        // 4. API Call
+        const res = await Instance.post('/auth/chat/ask', payload, {
+            headers: {
+                'Authorization': token ? token : '', // Pass token exactly as requested
+                'Content-Type': 'application/json'
+            }
+        });
+
+        // 5. Update Chat with Response
+        const responseText = res.data.answer || res.data.message || (typeof res.data === 'string' ? res.data : "Here is the information from the video/link.");
+
+        setChatMessages(prev => prev.map(msg => 
+            msg.id === loadingId 
+            ? { ...msg, content: responseText, isLoading: false } 
+            : msg
+        ));
+
+    } catch (error: any) {
+        console.error("Chat API Error:", error);
+        const errorMsg = error.response?.data?.message || "Sorry, I encountered an error communicating with the intelligence engine.";
+        
+        setChatMessages(prev => prev.map(msg => 
+            msg.id === loadingId 
+            ? { ...msg, content: errorMsg, isLoading: false } 
+            : msg
+        ));
+    }
   };
 
   // --- TRANSLATION LOGIC ---
@@ -713,7 +768,11 @@ export default function UserDashboard() {
                                 "p-3.5 rounded-2xl text-xs leading-relaxed shadow-sm relative",
                                 msg.role === 'user' ? "bg-orange-500 text-white rounded-br-none" : "bg-white text-slate-700 border border-slate-200 rounded-bl-none"
                             )}>
-                                {msg.content}
+                                {msg.isLoading ? (
+                                    <div className="flex items-center gap-2">
+                                        <Loader2 className="h-3 w-3 animate-spin" /> {msg.content}
+                                    </div>
+                                ) : msg.content}
                             </div>
                             <span className="text-[9px] text-slate-400 px-1">{msg.timestamp.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</span>
                         </div>
