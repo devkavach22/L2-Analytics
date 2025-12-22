@@ -14,7 +14,8 @@ import {
   CheckCircle2, MessageSquare, FolderOpen, 
   ArrowLeft, Pencil, Loader2,
   Link as LinkIcon, Youtube, ExternalLink, Play,
-  Info, FileInput, List, Languages, ScanText, User, Send, Bot, RefreshCw, Copy, Smartphone
+  Info, FileInput, List, Languages, ScanText, User, Send, Bot, RefreshCw, Copy, Smartphone,
+  ShieldCheck, FileBarChart, PieChart
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -55,6 +56,14 @@ const toastVariant = {
   visible: { opacity: 1, y: 0, scale: 1, transition: { type: "spring", stiffness: 300, damping: 20 } },
   exit: { opacity: 0, y: 20, scale: 0.9, transition: { duration: 0.2 } }
 };
+
+// --- REPORT TYPES CONSTANTS ---
+const REPORT_TYPES = [
+    { id: 'summary', label: 'Quick Summary', icon: FileText, desc: 'Key points & executive summary', color: 'bg-blue-50 text-blue-600' },
+    { id: 'detailed', label: 'Deep Dive', icon: Brain, desc: 'Detailed analysis & insights', color: 'bg-purple-50 text-purple-600' },
+    { id: 'compliance', label: 'Compliance Check', icon: ShieldCheck, desc: 'Legal risks & PII detection', color: 'bg-emerald-50 text-emerald-600' },
+    { id: 'sentiment', label: 'Sentiment Analysis', icon: Activity, desc: 'Tone, emotion & intent', color: 'bg-orange-50 text-orange-600' },
+];
 
 // --- COMPONENT: GLOW CARD ---
 const GlowCard = ({ children, className = "", onClick, hoverEffect = true }: any) => {
@@ -142,6 +151,12 @@ type ChatMessageType = {
     timestamp: Date;
     isLoading?: boolean;
 };
+
+type ReportTarget = {
+    type: 'file' | 'folder';
+    id: string;
+    name: string;
+} | null;
 
 // --- MOCK AI DATA ---
 const sentimentData = [
@@ -261,6 +276,11 @@ export default function UserDashboard() {
   const [metaDocumentType, setMetaDocumentType] = useState("PDF"); 
   const [metaRelatedTo, setMetaRelatedTo] = useState("");
 
+  // Report Generation State
+  const [showReportModal, setShowReportModal] = useState(false);
+  const [reportTarget, setReportTarget] = useState<ReportTarget>(null);
+  const [selectedReportType, setSelectedReportType] = useState<string>("summary");
+
   // Chat & Link Processing State
   const [activeChatLink, setActiveChatLink] = useState<LinkType | null>(null);
   const [chatMessages, setChatMessages] = useState<ChatMessageType[]>([]);
@@ -306,25 +326,21 @@ export default function UserDashboard() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isUserLoaded, currentUser]);
 
-  // --- REPORT COMPLETION LISTENER ---
+  // --- REPORT COMPLETION LISTENER (Updated) ---
   useEffect(() => {
-    // Poll local storage for report completion notification from AISearchPage
-    const checkReportStatus = () => {
+    const checkReportStatus = async () => {
+        // 1. Check LocalStorage (cross-tab)
         const notification = localStorage.getItem(NOTIFICATION_KEY);
         if (notification) {
             try {
                 const report = JSON.parse(notification);
                 showToast(`Report Ready: ${report.title}`, 'success');
-                // Clear the notification so it doesn't show again
                 localStorage.removeItem(NOTIFICATION_KEY);
-            } catch (e) {
-                console.error("Error parsing notification", e);
-                localStorage.removeItem(NOTIFICATION_KEY);
-            }
+            } catch (e) { localStorage.removeItem(NOTIFICATION_KEY); }
         }
     };
 
-    const interval = setInterval(checkReportStatus, 2000); // Check every 2 seconds
+    const interval = setInterval(checkReportStatus, 3000); 
     return () => clearInterval(interval);
   }, []);
 
@@ -462,7 +478,6 @@ export default function UserDashboard() {
   const handleCreateFolder = async () => {
       if(!newFolderName.trim() || !currentUser) return;
       const uid = getUserId(currentUser);
-      // Logic to get the creator's name dynamically, fallback to "Prachi Shah" if not found
       const creatorName = currentUser?.name || currentUser?.username || "Prachi Shah";
 
       try {
@@ -527,6 +542,31 @@ export default function UserDashboard() {
       if(e.target.files && e.target.files.length > 0) initiateUpload(e.target.files);
   };
 
+  // --- REPORT GENERATION HANDLERS ---
+  const handleInitiateReport = (type: 'folder' | 'file', id: string, name: string) => {
+      setReportTarget({ type, id, name });
+      setSelectedReportType("summary");
+      setShowReportModal(true);
+  };
+
+  const handleGenerateReport = async () => {
+      if(!reportTarget) return;
+      
+      setShowReportModal(false);
+      showToast(`Generating ${selectedReportType} report for ${reportTarget.name}...`, "info");
+
+      // Mock API call - in real app replace with your endpoint
+      // Example: await Instance.post('/auth/report/generate', { targetId: reportTarget.id, type: selectedReportType });
+      
+      try {
+        await new Promise(r => setTimeout(r, 2000));
+        showToast("Report Generation Queued. You will be notified.", "success");
+        setReportTarget(null);
+      } catch (e) {
+        showToast("Failed to start report generation", "error");
+      }
+  };
+
   // --- LINK & CHAT LOGIC ---
   const handleAddLink = async () => {
     if(!newLinkUrl.trim()) return;
@@ -548,7 +588,6 @@ export default function UserDashboard() {
       showToast("Running OCR extraction...", "info");
 
       try {
-          // Mock API call for now. In real app: await Instance.post('/auth/link/ocr', { linkId: link.id });
           await new Promise(r => setTimeout(r, 2000));
           
           setLinks(prev => prev.map(l => l.id === link.id ? { ...l, ocrStatus: 'completed', extractedText: `Extracted content from ${l.url}...\nLorem ipsum dolor sit amet.` } : l));
@@ -590,22 +629,19 @@ export default function UserDashboard() {
     setChatMessages(prev => [...prev, loadingMsg]);
 
     try {
-        // 3. Prepare Payload & Headers
-        const token = localStorage.getItem("token"); // Get token from local storage
+        const token = localStorage.getItem("token");
         const payload = {
             question: currentQuestion,
             link: activeChatLink.url
         };
 
-        // 4. API Call
         const res = await Instance.post('/auth/chat/ask', payload, {
             headers: {
-                'Authorization': token ? token : '', // Pass token exactly as requested
+                'Authorization': token ? token : '',
                 'Content-Type': 'application/json'
             }
         });
 
-        // 5. Update Chat with Response
         const responseText = res.data.answer || res.data.message || (typeof res.data === 'string' ? res.data : "Here is the information from the video/link.");
 
         setChatMessages(prev => prev.map(msg => 
@@ -638,12 +674,10 @@ export default function UserDashboard() {
       showToast("Translating content...", "info");
       
       try {
-          // Mock API call: await Instance.post('/auth/link/translate', { linkId: viewingTextLink.id });
           await new Promise(r => setTimeout(r, 1500));
           
           const translated = `(Translated to English)\n\n${viewingTextLink.extractedText}`;
           
-          // Update local state and links state
           const updatedLink = { ...viewingTextLink, translatedText: translated };
           setViewingTextLink(updatedLink);
           setLinks(prev => prev.map(l => l.id === updatedLink.id ? updatedLink : l));
@@ -993,6 +1027,74 @@ export default function UserDashboard() {
     </motion.div>
   );
 
+  // --- REPORT GENERATION MODAL ---
+  const renderReportModal = () => (
+      <motion.div 
+        className="fixed inset-0 z-[250] bg-slate-900/70 backdrop-blur-sm flex items-center justify-center p-4"
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        exit={{ opacity: 0 }}
+    >
+        <motion.div 
+            initial={{ scale: 0.95, y: 10 }} 
+            animate={{ scale: 1, y: 0 }} 
+            className="bg-white w-full max-w-lg rounded-2xl p-0 shadow-2xl border border-white/20 overflow-hidden"
+        >
+            <div className="bg-gradient-to-r from-orange-50 to-white p-6 border-b border-orange-100 flex justify-between items-center">
+                 <div>
+                    <h3 className="text-lg font-black text-slate-800 flex items-center gap-2">
+                        <Sparkles className="h-5 w-5 text-orange-500 fill-orange-500" /> Generate Intelligence Report
+                    </h3>
+                    <p className="text-xs text-slate-500 mt-1">
+                        Analyzing: <span className="font-bold text-slate-700">{reportTarget?.name}</span>
+                    </p>
+                 </div>
+                 <Button variant="ghost" size="icon" onClick={() => setShowReportModal(false)} className="rounded-full"><X className="h-5 w-5 text-slate-400" /></Button>
+            </div>
+
+            <div className="p-6">
+                <p className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-4">Select Report Type</p>
+                <div className="grid grid-cols-1 gap-3">
+                    {REPORT_TYPES.map((type) => {
+                        const Icon = type.icon;
+                        const isSelected = selectedReportType === type.id;
+                        return (
+                            <div 
+                                key={type.id}
+                                onClick={() => setSelectedReportType(type.id)}
+                                className={cn(
+                                    "relative p-4 rounded-xl border-2 transition-all cursor-pointer flex items-center gap-4 group",
+                                    isSelected ? "border-orange-500 bg-orange-50/50" : "border-slate-100 hover:border-orange-200 hover:bg-slate-50"
+                                )}
+                            >
+                                <div className={cn("p-3 rounded-xl transition-colors", type.color, isSelected ? "bg-white shadow-sm" : "bg-white")}>
+                                    <Icon className="h-6 w-6" />
+                                </div>
+                                <div>
+                                    <h4 className={cn("font-bold text-sm", isSelected ? "text-slate-900" : "text-slate-700")}>{type.label}</h4>
+                                    <p className="text-xs text-slate-500">{type.desc}</p>
+                                </div>
+                                {isSelected && (
+                                    <div className="absolute right-4 top-1/2 -translate-y-1/2">
+                                        <CheckCircle2 className="h-5 w-5 text-orange-500 fill-orange-100" />
+                                    </div>
+                                )}
+                            </div>
+                        )
+                    })}
+                </div>
+            </div>
+
+            <div className="p-6 pt-2 bg-slate-50 flex gap-3">
+                <Button variant="outline" className="flex-1 rounded-xl border-slate-200" onClick={() => setShowReportModal(false)}>Cancel</Button>
+                <Button onClick={handleGenerateReport} className="flex-1 bg-slate-900 hover:bg-slate-800 text-white rounded-xl font-bold shadow-lg shadow-slate-900/10">
+                    <Sparkles className="h-4 w-4 mr-2" /> Generate Report
+                </Button>
+            </div>
+        </motion.div>
+    </motion.div>
+  );
+
   // --- RENDER POPUP ---
   const renderWorkspacePopup = () => (
     <motion.div 
@@ -1141,6 +1243,13 @@ export default function UserDashboard() {
                                     <Button variant="ghost" size="icon" className="h-7 w-7 text-slate-300 hover:text-slate-500" onClick={() => setActiveFolderMenu(activeFolderMenu === folder.id ? null : folder.id)}><MoreVertical className="h-4 w-4" /></Button>
                                     {activeFolderMenu === folder.id && (
                                         <div className="absolute right-0 top-full mt-2 w-36 bg-white rounded-xl shadow-2xl border border-orange-200 z-[100] overflow-hidden py-1 ring-4 ring-orange-500/5">
+                                            <button 
+                                                onClick={() => { setActiveFolderMenu(null); handleInitiateReport('folder', folder.id, folder.name); }}
+                                                className="w-full text-left px-3 py-2.5 hover:bg-purple-50 text-purple-600 text-xs flex items-center gap-2 font-bold transition-colors"
+                                            >
+                                                <Sparkles className="h-3.5 w-3.5" /> Analyze
+                                            </button>
+                                            <div className="h-px bg-slate-100 my-1"></div>
                                             <button className="w-full text-left px-3 py-2.5 hover:bg-orange-50 text-slate-600 text-xs flex items-center gap-2 font-medium transition-colors">
                                                 <Pencil className="h-3.5 w-3.5" /> Edit
                                             </button>
@@ -1236,6 +1345,13 @@ export default function UserDashboard() {
                                             </Button>
                                             {activeFolderMenu === folder.id && (
                                                 <div className="absolute right-0 top-full mt-1 w-32 bg-white rounded-xl shadow-xl border border-orange-100 z-[50] overflow-hidden py-1">
+                                                    <button 
+                                                        onClick={() => { setActiveFolderMenu(null); handleInitiateReport('folder', folder.id, folder.name); }}
+                                                        className="w-full text-left px-3 py-2 hover:bg-purple-50 text-purple-600 text-xs flex items-center gap-2 font-bold"
+                                                    >
+                                                        <Sparkles className="h-3 w-3" /> Analyze
+                                                    </button>
+                                                    <div className="h-px bg-slate-100 my-1"></div>
                                                     <button className="w-full text-left px-3 py-2 hover:bg-orange-50 text-slate-600 text-xs flex items-center gap-2 font-medium">
                                                         <Pencil className="h-3 w-3" /> Edit
                                                     </button>
@@ -1435,8 +1551,15 @@ export default function UserDashboard() {
                                     </div>
                                 </td>
                                 <td className="px-4 py-2.5"><Badge variant="outline" className="text-[10px] text-slate-500 border-slate-200 bg-slate-50">{file.extension.toUpperCase()}</Badge></td>
-                                <td className="px-4 py-2.5 text-right w-24">
+                                <td className="px-4 py-2.5 text-right w-36">
                                     <div className="flex justify-end gap-1">
+                                        <Button 
+                                            onClick={() => handleInitiateReport('file', file.id, file.name)}
+                                            size="icon" variant="ghost" className="h-7 w-7 hover:bg-purple-50 text-slate-400 hover:text-purple-600 rounded-full"
+                                            title="Analyze File"
+                                        >
+                                            <Sparkles className="h-3.5 w-3.5" />
+                                        </Button>
                                         <Button onClick={() => setViewingFile(file)} size="icon" variant="ghost" className="h-7 w-7 hover:bg-blue-50 text-slate-400 hover:text-blue-600 rounded-full"><Eye className="h-3.5 w-3.5" /></Button>
                                         <a href={fileUrl} download><Button size="icon" variant="ghost" className="h-7 w-7 hover:bg-emerald-50 text-slate-400 hover:text-emerald-600 rounded-full"><Download className="h-3.5 w-3.5" /></Button></a>
                                     </div>
@@ -1460,13 +1583,25 @@ export default function UserDashboard() {
     return (
       <div className="flex-1 flex flex-col h-full overflow-hidden">
          <div className="px-6 py-4 border-b border-orange-100/50 bg-white/50 backdrop-blur-sm flex justify-between items-center shrink-0">
-             <div>
-                <h1 className="text-xl font-bold text-slate-800 flex items-center gap-2">
-                   {selectedFolder ? (
-                       <> <span className="text-slate-400 cursor-pointer hover:text-orange-500 text-lg" onClick={() => setActiveWorkspaceTab("folders")}>Folders</span> <ChevronRight className="h-5 w-5 text-slate-300" /> {selectedFolder.name} </>
-                   ) : "All Files"}
-                </h1>
-                <p className="text-xs text-slate-500 mt-0.5">{selectedFolder ? "Manage folder content." : "View all documents."}</p>
+             <div className="flex items-center gap-4">
+                 <div>
+                    <h1 className="text-xl font-bold text-slate-800 flex items-center gap-2">
+                    {selectedFolder ? (
+                        <> <span className="text-slate-400 cursor-pointer hover:text-orange-500 text-lg" onClick={() => setActiveWorkspaceTab("folders")}>Folders</span> <ChevronRight className="h-5 w-5 text-slate-300" /> {selectedFolder.name} </>
+                    ) : "All Files"}
+                    </h1>
+                    <p className="text-xs text-slate-500 mt-0.5">{selectedFolder ? "Manage folder content." : "View all documents."}</p>
+                 </div>
+                 {/* ANALYZE BUTTON FOR SELECTED FOLDER */}
+                 {selectedFolder && (
+                     <Button 
+                        size="sm" 
+                        onClick={() => handleInitiateReport('folder', selectedFolder.id, selectedFolder.name)}
+                        className="bg-slate-900 text-white hover:bg-slate-800 text-xs font-bold rounded-full h-8 px-4 flex items-center gap-2 shadow-lg shadow-slate-900/10 ml-4"
+                     >
+                         <Sparkles className="h-3 w-3 text-orange-300" /> Analyze Folder
+                     </Button>
+                 )}
              </div>
              <div className="relative">
                  {isSearching && fileSearchTerm.trim() ? <Loader2 className="absolute left-3 top-1/2 -translate-y-1/2 h-3 w-3 text-orange-500 animate-spin" /> : <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3 w-3 text-slate-400" />}
@@ -1549,6 +1684,7 @@ export default function UserDashboard() {
         {viewingFile && <FileViewerOverlay file={viewingFile} onClose={() => setViewingFile(null)} />}
         {showWorkspace && renderWorkspacePopup()}
         {showUploadModal && renderUploadModal()}
+        {showReportModal && renderReportModal()}
         {/* Render New Chat and Text Viewer Overlays */}
         {activeChatLink && RenderChatOverlay()}
         {viewingTextLink && RenderTextViewer()}
@@ -1618,8 +1754,6 @@ export default function UserDashboard() {
     </div>
   );
 }
-
-
 
 
 // import React, { useState, useEffect, useRef } from "react";

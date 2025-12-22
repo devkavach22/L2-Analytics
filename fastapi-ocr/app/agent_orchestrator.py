@@ -20,7 +20,6 @@ from .tools.sentiment_agent import SentimentAgent
 
 from .tools.llm_loader import load_llm 
 from .nlp_pipeline import clean_text
-from .ocr_utils import save_pdf
 from .generators.chart_generator import generate_chart
 from .generators.report_generator import render_html_report
 
@@ -28,6 +27,58 @@ from langchain_core.prompts import PromptTemplate
 from langchain_core.output_parsers import StrOutputParser
 
 load_dotenv()
+
+# --- LAW ENFORCEMENT PROMPTS (SINGLE FILE) ---
+LE_PROMPTS = {
+    "criminal_profile": """
+    Based on the provided text, create a Master Criminal Profile.
+    Input Text: {text}
+    Risk Analysis: {risks}
+    
+    Output Structure:
+    1. Executive Summary
+    2. Identity Details (Name, Age, Address)
+    3. Criminal History / Allegations
+    4. Modus Operandi (MO)
+    5. Psych/Risk Assessment
+    6. Associates mentioned
+    """,
+    "fir_analysis": """
+    Analyze this FIR/Legal Document.
+    Input Text: {text}
+    
+    Output Structure:
+    1. Case Details (FIR No, Station, Date)
+    2. Accused & Complainant
+    3. Acts & Sections (IPC/CrPC)
+    4. Timeline of Events
+    5. Evidence/Witnesses Mentioned
+    6. Investigative Leads
+    """,
+    "interrogation": """
+    Analyze this Interrogation Transcript.
+    Input Text: {text}
+    Sentiment: {sentiment}
+
+    Output Structure:
+    1. Subject Information
+    2. Summary of Statement
+    3. Key Admissions vs Denials
+    4. Inconsistencies Detected
+    5. Behavioral Analysis
+    6. Actionable Intelligence
+    """,
+    "custody": """
+    Generate a Custody Movement Report.
+    Input Text: {text}
+
+    Output Structure:
+    1. Inmate Details
+    2. Movement History (Dates & Locations)
+    3. Medical/Conduct Notes
+    4. Upcoming Hearings
+    """
+}
 
 class AgenticReportPipeline:
     def __init__(self):
@@ -47,7 +98,7 @@ class AgenticReportPipeline:
         self.format_agent = FormatAgent()
         self.data_extractor = DataExtractionAgent()
 
-        # Initialize NEW Agents
+        # Initialize Specialized Agents
         self.risk_agent = RiskAnalysisAgent()
         self.cognitive_agent = CognitiveAgent()
         self.sentiment_agent = SentimentAgent()
@@ -67,14 +118,44 @@ class AgenticReportPipeline:
         """Helper to run identification in a thread"""
         try:
             id_chain = PromptTemplate.from_template(
-                "Identify this document type (e.g., Invoice, Contract, Report, Email). Return ONLY the type name:\n{text}"
+                "Identify this document type (e.g., FIR, Invoice, Contract). Return ONLY the type name:\n{text}"
             ) | self.llm | StrOutputParser()
             return id_chain.invoke({"text": text[:500]})
         except:
             return "Document"
 
+    def _get_active_agents(self, report_type):
+        """
+        SPEED OPTIMIZATION: Returns a set of agents required for the report.
+        This prevents running unnecessary agents.
+        """
+        rt = report_type.lower()
+        active = {"summary", "keywords", "decision"} # Defaults
+
+        # Trigger specialized agents based on keywords
+        if any(x in rt for x in ["financial", "market", "sales", "trend"]):
+            active.add("trends")
+            active.add("chart")
+        
+        if any(x in rt for x in ["risk", "audit", "compliance", "legal", "fir", "criminal", "case"]):
+            active.add("risks")
+        
+        if any(x in rt for x in ["psych", "sentiment", "hr", "interrogation", "interview"]):
+            active.add("sentiment")
+            active.add("cognitive")
+        
+        if any(x in rt for x in ["custody", "prison", "gang"]):
+            active.add("risks")
+            active.add("keywords")
+
+        if any(x in rt for x in ["comprehensive", "full", "detailed"]):
+            active.update({"trends", "risks", "sentiment", "cognitive", "chart"})
+
+        return active
+
     def run(self, user_id: str, report_type: str, keyword: str = None, new_file_text: str = None):
         print(f"\n--- 🚀 Pipeline Started for User: {user_id} ---")
+        print(f"📋 Report Type Requested: {report_type}")
 
         # =========================================================
         # STEP 1: DATA FETCHING
@@ -104,79 +185,120 @@ class AgenticReportPipeline:
         cleaned_text = clean_text(full_context)[:12000]
         
         # =========================================================
-        # STEP 2: PARALLEL AGENT EXECUTION
+        # STEP 2: OPTIMIZED PARALLEL AGENT EXECUTION
         # =========================================================
-        print("⚡ Running Analysis Agents in Parallel...")
         
-        results = {}
+        # KEY OPTIMIZATION: Only activate needed agents
+        active_agents = self._get_active_agents(report_type)
+        print(f"⚡ Activating specific agents: {active_agents}")
+
+        results = {
+            "summary": "",
+            "keywords": [],
+            "decisions": "Not requested.",
+            "trends": "Not requested.",
+            "risks": "Not requested.",
+            "sentiment": "Not requested.",
+            "cognitive": "Not requested.",
+            "chart_path": None
+        }
+        
         doc_identity = "Document"
 
         with concurrent.futures.ThreadPoolExecutor() as executor:
-            # 1. Start Document ID Task
-            f_id = executor.submit(self._identify_document, cleaned_text)
-            
-            # 2. Start Analytical Agents
-            f_sum = executor.submit(self.summarizer.run, cleaned_text)
-            f_key = executor.submit(self.keyword_agent.run, cleaned_text)
-            f_dec = executor.submit(self.decision_agent.run, cleaned_text)
-            f_trd = executor.submit(self.trend_agent.run, cleaned_text)
-            f_rsk = executor.submit(self.risk_agent.run, cleaned_text)
-            f_sen = executor.submit(self.sentiment_agent.run, cleaned_text)
-            f_cog = executor.submit(self.cognitive_agent.run, cleaned_text)
-            
-            # 3. Chart Generation
-            f_chart = None
-            if len(cleaned_text) > 200:
-                f_chart = executor.submit(self.data_extractor.run, cleaned_text, keyword or "Metrics")
+            futures = {}
 
-            # 4. Gather Results
-            try:
-                doc_identity = f_id.result() 
-            except Exception:
-                pass
+            # Always run ID
+            futures[executor.submit(self._identify_document, cleaned_text)] = "identity"
 
-            results = {
-                "summary": self._clean_llm_output(f_sum.result()),
-                "keywords": f_key.result(),
-                "decisions": self._clean_llm_output(f_dec.result()),
-                "trends": f_trd.result(),
-                "risks": self._clean_llm_output(f_rsk.result()),
-                "sentiment": self._clean_llm_output(f_sen.result()),
-                "cognitive": self._clean_llm_output(f_cog.result()),
-                "chart_path": None
-            }
+            # Conditionally run agents
+            if "summary" in active_agents:
+                futures[executor.submit(self.summarizer.run, cleaned_text)] = "summary"
             
-            if f_chart:
+            if "keywords" in active_agents:
+                futures[executor.submit(self.keyword_agent.run, cleaned_text)] = "keywords"
+
+            if "decision" in active_agents:
+                futures[executor.submit(self.decision_agent.run, cleaned_text)] = "decisions"
+
+            if "trends" in active_agents:
+                futures[executor.submit(self.trend_agent.run, cleaned_text)] = "trends"
+
+            if "risks" in active_agents:
+                futures[executor.submit(self.risk_agent.run, cleaned_text)] = "risks"
+
+            if "sentiment" in active_agents:
+                futures[executor.submit(self.sentiment_agent.run, cleaned_text)] = "sentiment"
+
+            if "cognitive" in active_agents:
+                futures[executor.submit(self.cognitive_agent.run, cleaned_text)] = "cognitive"
+
+            if "chart" in active_agents and len(cleaned_text) > 200:
+                futures[executor.submit(self.data_extractor.run, cleaned_text, keyword or "Metrics")] = "chart_data"
+
+            # Gather Results
+            for future in concurrent.futures.as_completed(futures):
+                task_type = futures[future]
                 try:
-                    chart_raw = f_chart.result()
-                    if chart_raw and chart_raw.get("values"):
-                        results["chart_path"] = os.path.abspath(generate_chart(chart_raw))
-                except Exception:
-                    pass
+                    res = future.result()
+                    
+                    if task_type == "identity":
+                        doc_identity = res
+                    elif task_type == "chart_data":
+                        if res and res.get("values"):
+                            results["chart_path"] = os.path.abspath(generate_chart(res))
+                    else:
+                        if isinstance(res, list):
+                            results[task_type] = res
+                        else:
+                            results[task_type] = self._clean_llm_output(res)
+                except Exception as e:
+                    print(f"⚠ Agent {task_type} failed: {e}")
 
-        print("✔ All Agents Finished.")
+        print("✔ Agents Finished.")
 
         # =========================================================
         # STEP 3: FORMAT & GENERATE REPORT
         # =========================================================
         print("📝 Formatting Final Report...")
         
-        report_text = "" # FIX: Initialize variable to avoid 'undefined' errors
+        # Check for Specialized Law Enforcement Requests
+        rt = report_type.lower()
+        specialized_template = None
         
-        try:
-            raw_report = self.format_agent.run(
-                summary=results["summary"],
-                keywords=results["keywords"],
-                trends=results["trends"],
-                decisions=results["decisions"],
-                report_type=report_type
-            )
-            report_text = self._clean_llm_output(raw_report)
-        except Exception as e:
-            print(f"⚠ Formatting failed: {e}")
-            report_text = results["summary"]
+        if "profile" in rt or "criminal" in rt:
+            specialized_template = LE_PROMPTS["criminal_profile"]
+        elif "fir" in rt or "case" in rt:
+            specialized_template = LE_PROMPTS["fir_analysis"]
+        elif "interrogation" in rt:
+            specialized_template = LE_PROMPTS["interrogation"]
+        elif "custody" in rt:
+            specialized_template = LE_PROMPTS["custody"]
 
-        # FIX: Ensure "report" key exists for the API response
+        if specialized_template:
+            # Run specialized formatting
+            prompt = PromptTemplate.from_template(specialized_template)
+            chain = prompt | self.llm | StrOutputParser()
+            report_text = chain.invoke({
+                "text": cleaned_text,
+                "risks": results["risks"],
+                "sentiment": results["sentiment"]
+            })
+        else:
+            # Run standard formatting
+            try:
+                raw_report = self.format_agent.run(
+                    summary=results["summary"],
+                    keywords=results["keywords"],
+                    trends=results["trends"],
+                    decisions=results["decisions"],
+                    report_type=report_type
+                )
+                report_text = self._clean_llm_output(raw_report)
+            except Exception as e:
+                print(f"⚠ Formatting failed: {e}")
+                report_text = results["summary"]
+
         results["report"] = report_text 
         results["final_report_text"] = report_text
 
@@ -194,7 +316,7 @@ class AgenticReportPipeline:
             "sentiment": results["sentiment"],
             "cognitive": results["cognitive"],
             "final_report_text": report_text, 
-            "report": report_text, # <--- CRITICAL FIX for 'report is undefined'
+            "report": report_text,
             "download_link": download_link
         }
 

@@ -19,12 +19,29 @@ from langchain_core.output_parsers import StrOutputParser
 # ---------------- NEW IMPORT (REQUESTED) ----------------
 from langchain.chains import RetrievalQA
 
+# ---------------- REPORT GENERATION IMPORTS ----------------
+try:
+    from report_generator import render_html_report
+except ImportError:
+    # Fallback if report_generator is not in the same directory yet
+    print("Warning: report_generator module not found. PDF generation may fail.")
+    def render_html_report(data, report_type, user_id):
+        return f"Report generated: {data.get('title')}"
+
 # ---------------- OPENAI IMPORTS (OPTIONAL) ----------------
 try:
     from langchain_openai import OpenAIEmbeddings, ChatOpenAI
 except ImportError:
     OpenAIEmbeddings = None
     ChatOpenAI = None
+
+# ---------------- OLLAMA IMPORTS (COMMENTED OUT AS REQUESTED) ----------------
+# try:
+#     from langchain_community.llms import Ollama
+#     from langchain_community.embeddings import OllamaEmbeddings
+# except ImportError:
+#     Ollama = None
+#     OllamaEmbeddings = None
 
 load_dotenv()
 
@@ -75,6 +92,11 @@ def _get_embedding_model():
         print("🔹 Using OpenAI Embeddings")
         return OpenAIEmbeddings(openai_api_key=OPENAI_API_KEY)
     
+    # --- OLLAMA EMBEDDINGS (COMMENTED OUT) ---
+    # if not OPENAI_API_KEY and OllamaEmbeddings:
+    #     print("🔹 Using Ollama Embeddings")
+    #     return OllamaEmbeddings(model="llama3")
+
     print(f"🔹 Using Hugging Face Embeddings: {HUGGINGFACE_EMBEDDING_MODEL}")
     return HuggingFaceEmbeddings(model_name=HUGGINGFACE_EMBEDDING_MODEL)
 
@@ -98,6 +120,11 @@ def _initialize_llm():
             model_name="gpt-4o-mini",
             temperature=LLM_TEMPERATURE
         )
+    
+    # --- OLLAMA LLM (COMMENTED OUT) ---
+    # if not HUGGINGFACE_API_TOKEN and not OPENAI_API_KEY:
+    #     print("🔹 Using Ollama LLM")
+    #     return Ollama(model="llama3", temperature=LLM_TEMPERATURE)
 
     if not HUGGINGFACE_API_TOKEN:
         raise ValueError("Neither OPENAI_API_KEY nor HUGGINGFACE_API_TOKEN found.")
@@ -134,7 +161,7 @@ async def store_embeddings_async(text_content, metadata):
     return await loop.run_in_executor(None, store_embeddings, text_content, metadata)
 
 # =========================================================
-# 5. RETRIEVAL LOGIC (OPTIMIZED)
+# 5. RETRIEVAL LOGIC
 # =========================================================
 
 def _fetch_docs(query, user_id, source=None, k=RETRIEVAL_K, strict_source=True):
@@ -142,8 +169,6 @@ def _fetch_docs(query, user_id, source=None, k=RETRIEVAL_K, strict_source=True):
     store = get_vector_store()
     filter_query = {"user_id": {"$eq": user_id}}
     
-    # If a source is provided and we are in strict mode, filter by it.
-    # If source is None, we do NOT filter by source (Global Search).
     if strict_source and source:
         filter_query["source"] = {"$eq": source}
 
@@ -164,11 +189,10 @@ def generate_multi_queries(original_question, llm):
         queries = []
 
     queries.append(original_question)
-    # Deduplicate while preserving order
     return list(dict.fromkeys(queries))
 
 # =========================================================
-# 6. CHAT & REPORT FUNCTIONS
+# 6. CHAT & ORIGINAL VIDEO FUNCTIONS
 # =========================================================
 
 def chat_with_video(
@@ -183,40 +207,27 @@ def chat_with_video(
 ):
     llm = _initialize_llm()
 
-    # --- Step 1: Retrieval (Parallelized) ---
     final_docs = []
     queries = [question]
     
-    # Only generate multi-queries if explicitly requested
     if use_multi_query:
         queries = generate_multi_queries(question, llm)
 
     seen_contents = set()
 
-    def fetch_strict(q):
-        return _fetch_docs(q, user_id, source=video_url, k=k, strict_source=True)
-
-    def fetch_relaxed(q):
-        return _fetch_docs(q, user_id, source=None, k=k, strict_source=False)
-
-    # OPTIMIZATION: Run strict searches in parallel for all queries
-    with ThreadPoolExecutor() as executor:
-        strict_results = list(executor.map(fetch_strict, queries))
-
-    # Flatten results
-    for docs in strict_results:
+    # Original Logic: Loop through queries (Simple)
+    # Kept as is to preserve original stability
+    for q in queries:
+        docs = _fetch_docs(q, user_id, source=video_url, k=k, strict_source=True)
         for doc in docs:
             if doc.page_content not in seen_contents:
                 seen_contents.add(doc.page_content)
                 final_docs.append(doc)
 
-    # OPTIMIZATION: Only run relaxed search if Strict failed completely and we have a specific video_url
     if not final_docs and video_url:
-        print("⚠️ No strict matches. Parallel relaxed search...")
-        with ThreadPoolExecutor() as executor:
-            relaxed_results = list(executor.map(fetch_relaxed, queries))
-            
-        for docs in relaxed_results:
+        print("⚠️ No strict matches. Relaxed search...")
+        for q in queries:
+            docs = _fetch_docs(q, user_id, source=None, k=k, strict_source=False)
             for doc in docs:
                 if doc.page_content not in seen_contents:
                     seen_contents.add(doc.page_content)
@@ -227,7 +238,6 @@ def chat_with_video(
 
     context = "\n\n".join(d.page_content for d in final_docs)
 
-    # --- Step 2: Generation ---
     prompt_text = f"""
             You are a helpful assistant. Answer ONLY based on the context.
             Language: {answer_language}. Tone: {answer_tone}. Style: {answer_style}.
@@ -244,73 +254,6 @@ def chat_with_video(
     chain = prompt | llm | StrOutputParser()
 
     return chain.invoke({"context": context, "question": question})
-
-
-# --- NEW: REPORT GENERATION FUNCTION ---
-def generate_rag_report(
-    topic: str,
-    user_id: str,
-    report_format: str = "detailed", # e.g., 'summary', 'detailed', 'analytical'
-    k: int = 4  # Use a higher K for reports to gather more context
-):
-    """
-    Generates a structured report based on ALL documents/videos for a specific user.
-    Unlike chat_with_video, this does NOT filter by a specific source URL.
-    """
-    llm = _initialize_llm()
-
-    # 1. Generate Multi-Queries for broad coverage
-    queries = generate_multi_queries(topic, llm)
-    
-    final_docs = []
-    seen_contents = set()
-
-    # 2. Retrieval: Fetch documents from ALL sources (source=None)
-    def fetch_global(q):
-        # strict_source=False ensures we ignore any source filtering
-        return _fetch_docs(q, user_id, source=None, k=k, strict_source=False)
-
-    with ThreadPoolExecutor() as executor:
-        results = list(executor.map(fetch_global, queries))
-
-    for docs in results:
-        for doc in docs:
-            if doc.page_content not in seen_contents:
-                seen_contents.add(doc.page_content)
-                final_docs.append(doc)
-
-    if not final_docs:
-        return "Insufficient data found in your knowledge base to generate a report on this topic."
-
-    context = "\n\n".join(d.page_content for d in final_docs)
-
-    # 3. Report Generation
-    prompt_text = f"""
-    You are an expert AI Analyst. 
-    Create a {report_format} report on the topic: "{{topic}}".
-    
-    Base your report ONLY on the following Context retrieved from the user's knowledge base.
-    If the context is unrelated to the topic, mention that data is missing.
-
-    Context:
-    {{context}}
-
-    Report Structure:
-    1. Executive Summary
-    2. Key Findings & Insights
-    3. Detailed Analysis
-    4. Conclusion / Next Steps
-
-    Format the output in clean Markdown.
-    """
-
-    prompt = PromptTemplate(
-        template=prompt_text, 
-        input_variables=["context", "topic"]
-    )
-    chain = prompt | llm | StrOutputParser()
-
-    return chain.invoke({"context": context, "topic": topic})
 
 
 # --- OPTION B: RetrievalQA Chain (Existing) ---
@@ -336,15 +279,166 @@ def chat_using_retrieval_qa(question: str, user_id: str, video_url: str):
     return result["result"]
 
 # =========================================================
-# 7. ASYNC ORCHESTRATION
+# 7. NEW: LAW ENFORCEMENT & CASE REPORT GENERATION
+# =========================================================
+
+CASE_REPORT_PROMPTS = {
+    "master_criminal_profile": """
+    Create a Master Criminal Profile using ONLY the context.
+    Rules: Do not speculate. Use neutral, law-enforcement tone.
+
+    Structure:
+    1. Executive Summary
+    2. Identity & Background (Name, Aliases, DOB, Physical Desc)
+    3. Criminal History & Modus Operandi (MO)
+    4. Known Associates & Gang Affiliations
+    5. Psychological & Behavioral Risk Indicators
+    6. Current Legal Status & Recommendations
+
+    Context:
+    {context}
+    """,
+
+    "fir_case_analysis": """
+    Create an FIR & Case Analytical Summary.
+    Structure:
+    1. Case Overview (FIR No, Date, Station)
+    2. Timeline of Events (Chronological)
+    3. Charges & Sections (IPC/Legal Codes)
+    4. Evidence Summary (Physical, Digital, Witness)
+    5. Investigation Gaps & Leads
+
+    Context:
+    {context}
+    """,
+
+    "interrogation_intelligence": """
+    Create an Interrogation Intelligence Report.
+    Rules: Do NOT conclude guilt. Highlight inconsistencies.
+
+    Structure:
+    1. Subject Overview
+    2. Key Admissions & Denials
+    3. Contradictions & Inconsistencies
+    4. Behavioral Observations (Stress, Defensiveness)
+    5. New Investigative Leads generated
+
+    Context:
+    {context}
+    """,
+
+    "custody_movement": """
+    Create a Prison & Custody Movement Report.
+    Structure:
+    1. Current Status
+    2. Custody Timeline (Arrest, Remand, Jail Transfers)
+    3. Medical & Conduct Record
+    4. Court Production History
+    5. Security Alerts
+
+    Context:
+    {context}
+    """,
+    
+    "default_report": """
+    Create a detailed analysis report on the following topic.
+    Topic: {topic}
+    Structure:
+    1. Executive Summary
+    2. Detailed Findings
+    3. Conclusion
+    
+    Context:
+    {context}
+    """
+}
+
+def generate_case_report(
+    report_type: str,
+    user_id: str,
+    k: int = 6
+):
+    """
+    Generates law-enforcement reports.
+    Optimized: Uses ThreadPoolExecutor to fetch context faster without blocking.
+    """
+    llm = _initialize_llm()
+
+    # Determine query based on report type to cast a wide net
+    query = report_type.replace("_", " ")
+
+    # Parallel Retrieval for Speed (New Logic applied only to this new function)
+    final_docs = []
+    seen = set()
+
+    # We can generate multiple queries here for better recall
+    queries = generate_multi_queries(query, llm)
+    
+    def fetch_task(q):
+        return _fetch_docs(q, user_id, source=None, k=k, strict_source=False)
+
+    # Fast parallel fetch
+    with ThreadPoolExecutor() as executor:
+        results = list(executor.map(fetch_task, queries))
+
+    for docs in results:
+        for doc in docs:
+            if doc.page_content not in seen:
+                seen.add(doc.page_content)
+                final_docs.append(doc)
+
+    if not final_docs:
+        return "No sufficient data found in the knowledge base to generate this report."
+
+    context = "\n\n".join(d.page_content for d in final_docs)
+
+    # Select Prompt
+    # Normalize keys to match user input roughly
+    selected_template = CASE_REPORT_PROMPTS.get("default_report")
+    for key in CASE_REPORT_PROMPTS:
+        if key in report_type.lower():
+            selected_template = CASE_REPORT_PROMPTS[key]
+            break
+            
+    prompt = PromptTemplate(
+        template=selected_template,
+        input_variables=["context", "topic"] if "topic" in selected_template else ["context"]
+    )
+
+    print(f"👮‍♂️ Generating Law Enforcement Report: {report_type}")
+    
+    # Run Chain
+    input_vars = {"context": context}
+    if "topic" in selected_template:
+        input_vars["topic"] = report_type
+
+    chain = prompt | llm | StrOutputParser()
+    report_text = chain.invoke(input_vars)
+
+    # Prepare for PDF
+    data = {
+        "title": report_type.replace("_", " ").title(),
+        "executive_summary": "Automated Law Enforcement Analysis generated from Vector Knowledge Base.",
+        "report": report_text
+    }
+
+    # Render PDF/HTML
+    return render_html_report(
+        data=data,
+        report_type=report_type,
+        user_id=user_id
+    )
+
+# =========================================================
+# 8. ASYNC ORCHESTRATION
 # =========================================================
 async def chat_with_video_async(*args, **kwargs):
     loop = asyncio.get_running_loop()
     return await loop.run_in_executor(None, chat_with_video, *args, **kwargs)
 
-async def generate_rag_report_async(*args, **kwargs):
+async def generate_case_report_async(*args, **kwargs):
     loop = asyncio.get_running_loop()
-    return await loop.run_in_executor(None, generate_rag_report, *args, **kwargs)
+    return await loop.run_in_executor(None, generate_case_report, *args, **kwargs)
 
 # # app/rag_engine.py
 

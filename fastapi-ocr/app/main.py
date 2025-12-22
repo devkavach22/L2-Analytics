@@ -219,6 +219,20 @@ async def agentic_report(req: ReportRequest):
             status_code=500
         )
 
+# # ============================================================
+# # OCR ENDPOINT (DO NOT MODIFY — EXACTLY AS REQUIRED)
+# # ============================================================
+@app.post("/ocr")
+async def ocr_endpoint(file: UploadFile = File(...)):
+    filename = file.filename
+    file_body = await file.read()
+
+    try:
+        text = extract_text_from_file(file_body, filename)
+        return {"success": True, "filename": filename, "text": text}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
 # (OCR and agentic-report endpoints remain as they were)
 
 # # app/main.py

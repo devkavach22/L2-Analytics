@@ -446,16 +446,21 @@ Write in a professional, objective tone.
         }
 
     def run(self, *args, **kwargs):
+        """
+        Synchronous wrapper for the async pipeline.
+        This method ensures the async code runs to completion even if called
+        from within an existing event loop (common in FastAPI).
+        """
         try:
+            # Case 1: Simple script execution (No existing loop)
             return asyncio.run(self.run_async(*args, **kwargs))
         except RuntimeError:
-            # If an event loop is already running (e.g., under uvicorn/fastapi),
-            # schedule the coroutine on the existing loop and return the Task.
-            loop = asyncio.get_event_loop()
-            if loop.is_running():
-                return loop.create_task(self.run_async(*args, **kwargs))
-            # Fallback: run until complete if loop not running (rare path)
-            return loop.run_until_complete(self.run_async(*args, **kwargs))
+            # Case 2: Running inside FastAPI (Loop already exists)
+            # We must run the async chain in a separate thread to avoid blocking the main loop
+            # and to allow 'asyncio.run' to create a NEW loop for this task.
+            with ThreadPoolExecutor(max_workers=1) as executor:
+                future = executor.submit(asyncio.run, self.run_async(*args, **kwargs))
+                return future.result()
 
 # import os
 # import uuid

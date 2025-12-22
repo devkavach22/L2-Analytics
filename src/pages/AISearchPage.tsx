@@ -20,19 +20,17 @@ import {
   FileExcelOutlined,
   FileImageOutlined,
   CloseCircleFilled, 
-  WarningFilled
+  WarningFilled,
+  LoadingOutlined
 } from "@ant-design/icons";
 import { Sparkles, Activity, Layers, FileOutput, Bot, Zap, Search, TrendingUp, Timer } from "lucide-react";
 import { clsx, type ClassValue } from "clsx";
 import { twMerge } from "tailwind-merge";
 
-// --- IMPORT AXIOS INSTANCE ---
 import Instance from "@/lib/axiosInstance"; 
-
 import { Header } from "@/components/Header";
 import { Footer } from "@/components/Footer";
 
-// --- UTILS ---
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
@@ -136,30 +134,28 @@ const SpotlightSection = ({ children, className = "" }: { children: React.ReactN
   );
 };
 
-// --- DATA CONSTANTS ---
+// --- UPDATED REPORT TYPES ---
 const REPORT_TYPES = [
-  { value: "Risk Assessment", label: "Risk Assessment" },
-  { value: "Technical Review", label: "Technical Review" },
-  { value: "Executive Summary", label: "Executive Summary" },
-  { value: "Market Trend Analysis", label: "Market Trend Analysis" },
-  { value: "Strategic Audit", label: "Strategic Audit" },
-  { value: "Legal Compliance Check", label: "Legal Compliance Check" },
-  { value: "Financial Review", label: "Financial Review" },
-  { value: "General Analysis", label: "Strategic Analysis" },
-  { value: "Criminal Investigation", label: "Criminal Investigation" },
-  { value: "Interview Report", label: "Interview Report" },
-  { value: "Forensic Audit", label: "Forensic Audit" },
+  { value: "Security Report", label: "Security Report" },
+  { value: "Technical Report", label: "Technical Report" },
+  { value: "Market Report", label: "Market Report" },
+  { value: "Executive Report", label: "Executive Report" },
+  { value: "Master Criminal Profile", label: "Master Criminal Profile" },
+  { value: "FIR & Case Analysis", label: "FIR & Case Analysis" },
+  { value: "Interrogation Intelligence Report", label: "Interrogation Intelligence Report" },
+  { value: "Custody Movement Report", label: "Custody Movement Report" },
+  { value: "Gang Network Report", label: "Gang Network Report" },
+  { value: "Court-Ready Legal Summary", label: "Court-Ready Legal Summary" },
 ];
 
 const QUICK_TEMPLATES = [
-  { label: "Quarterly Audit", type: "Financial Review" },
-  { label: "Competitor Analysis", type: "Market Trend Analysis" },
-  { label: "GDPR Compliance", type: "Legal Compliance Check" },
+  { label: "Suspect Profile", type: "Master Criminal Profile" },
+  { label: "Incident Analysis", type: "FIR & Case Analysis" },
+  { label: "Legal Brief", type: "Court-Ready Legal Summary" },
 ];
 
-// --- STORAGE KEYS FOR PERSISTENCE ---
-const GEN_STATE_KEY = "ai_generation_state";
 const NOTIFICATION_KEY = "latest_report_notification";
+const ACTIVE_JOB_KEY = "ai_search_active_job"; 
 
 export default function AISearch() {
   // Input State
@@ -172,13 +168,14 @@ export default function AISearch() {
   const [isLoadingFiles, setIsLoadingFiles] = useState(false);
   const [currentUser, setCurrentUser] = useState<any>(null);
 
-  const [reportType, setReportType] = useState("Executive Summary");
+  const [reportType, setReportType] = useState("Executive Report");
   
   // Processing State
   const [isGenerating, setIsGenerating] = useState(false);
   const [progress, setProgress] = useState(0);
   const [generationStep, setGenerationStep] = useState("");
-  
+  const [interruptedMessage, setInterruptedMessage] = useState<string | null>(null);
+
   // Data State
   const [reports, setReports] = useState<any[]>([]);
   
@@ -188,12 +185,11 @@ export default function AISearch() {
 
   const [stats, setStats] = useState({ successRate: 100, totalTimeSaved: 0 });
 
-  // Ref for cleanup
+  // Refs for Cleanup
   const progressInterval = useRef<NodeJS.Timeout | null>(null);
 
-  // --- EFFECT: LOAD USER, HISTORY & CHECK ACTIVE GENERATION ---
+  // --- EFFECT: LOAD USER & HISTORY ---
   useEffect(() => {
-    // 1. Load User
     const storedUser = localStorage.getItem("user");
     if (storedUser) {
       try {
@@ -204,76 +200,43 @@ export default function AISearch() {
       }
     }
 
-    // 2. Load Reports History
     const savedReports = localStorage.getItem("user_reports");
     if (savedReports) {
       try {
         setReports(JSON.parse(savedReports));
       } catch (e) { console.error(e); }
     }
+  }, []);
 
-    // 3. CHECK FOR ACTIVE GENERATION (Persistence Logic)
-    // If user switched tabs and came back, or refreshed, we restore the state
-    const savedGenState = localStorage.getItem(GEN_STATE_KEY);
-    if (savedGenState) {
+  // --- EFFECT: PERSISTENCE RESTORATION (No Backend Status Route) ---
+  useEffect(() => {
+    // Check if we left a job running in LocalStorage
+    const storedJob = localStorage.getItem(ACTIVE_JOB_KEY);
+    
+    if (storedJob) {
         try {
-            const parsedState = JSON.parse(savedGenState);
-            // Only restore if it was actively generating and not stale (optional: add timestamp check)
-            if (parsedState.isGenerating) {
-                setIsGenerating(true);
-                setInputType(parsedState.inputType);
-                setReportType(parsedState.reportType);
-                if (parsedState.inputType === 'keyword') setTopic(parsedState.topic);
-                if (parsedState.inputType === 'file') setSelectedFileId(parsedState.fileId);
-                
-                // Restore progress visually
-                setProgress(parsedState.progress || 25);
-                setGenerationStep("Resuming Background Analysis...");
-                
-                // Restart the simulation or polling
-                startProgressSimulation(parsedState.progress);
-                
-                // NOTE: In a real Socket.io environment, we would reconnect to the socket here.
-                // Since this is REST, if the promise was interrupted by a full reload, we can't 'catch' the response.
-                // However, for tab switching (React component unmount/remount), this restores the UI "Busy" state.
-                // For demonstration, we will assume if we restored state, we wait a bit then check or finish.
-            }
+            const jobData = JSON.parse(storedJob);
+            
+            // Restore inputs so the user doesn't lose them
+            if (jobData.inputType) setInputType(jobData.inputType);
+            if (jobData.topic) setTopic(jobData.topic);
+            if (jobData.fileId) setSelectedFileId(jobData.fileId);
+            if (jobData.reportType) setReportType(jobData.reportType);
+
+            // IMPORTANT: Since we don't have a backend status route, we can't reconnect to the Promise.
+            // If the component unmounted (user left page), the request is effectively cut off from the frontend.
+            // We must inform the user instead of showing a blank/stuck loading screen.
+            setInterruptedMessage("A previous report generation was interrupted because the page was closed. Your inputs have been restored.");
+            
+            // Clean up the stale job flag
+            localStorage.removeItem(ACTIVE_JOB_KEY);
+            
         } catch (e) {
-            console.error("Error restoring state", e);
-            localStorage.removeItem(GEN_STATE_KEY);
+            console.error("Failed to parse local job data", e);
+            localStorage.removeItem(ACTIVE_JOB_KEY);
         }
     }
   }, []);
-
-  // --- HELPER: START SIMULATION & UPDATE STORAGE ---
-  const startProgressSimulation = (startValue = 0) => {
-      if (progressInterval.current) clearInterval(progressInterval.current);
-      
-      progressInterval.current = setInterval(() => {
-        setProgress((prev) => {
-            if (prev >= 90) return prev; // Hold at 90% until API responds
-            const newProgress = prev + Math.floor(Math.random() * 5);
-            
-            // Update Local Storage with new progress so if user leaves and returns, progress is updated
-            updateStorageProgress(newProgress);
-            return newProgress;
-        });
-      }, 800);
-  };
-
-  const updateStorageProgress = (val: number) => {
-      const current = localStorage.getItem(GEN_STATE_KEY);
-      if (current) {
-          const parsed = JSON.parse(current);
-          parsed.progress = val;
-          localStorage.setItem(GEN_STATE_KEY, JSON.stringify(parsed));
-      }
-  };
-
-  const clearStorageState = () => {
-      localStorage.removeItem(GEN_STATE_KEY);
-      if (progressInterval.current) clearInterval(progressInterval.current);
-  };
 
   // --- EFFECT: FETCH FILES ---
   useEffect(() => {
@@ -282,16 +245,14 @@ export default function AISearch() {
     }
   }, [currentUser]);
 
-  // --- EFFECT: SAVE HISTORY & CALCULATE DYNAMIC STATS ---
+  // --- EFFECT: SAVE HISTORY ---
   useEffect(() => {
     localStorage.setItem("user_reports", JSON.stringify(reports));
-    
-    // LOGIC: Success Rate should be (Success / Total Attempts) * 100
+    // Calculate Stats
     const total = reports.length;
     const successCount = reports.filter(r => r.status === 'Ready').length;
     const rate = total === 0 ? 100 : Math.round((successCount / total) * 100);
     const hoursSaved = (total * 0.4).toFixed(1);
-
     setStats({ successRate: rate, totalTimeSaved: Number(hoursSaved) });
   }, [reports]);
 
@@ -302,7 +263,6 @@ export default function AISearch() {
 
     setIsLoadingFiles(true);
     try {
-      // Instance automatically adds Authorization header
       const [filesRes, foldersRes] = await Promise.all([
           Instance.get('/auth/files'),
           Instance.get('/auth/folders')
@@ -315,9 +275,7 @@ export default function AISearch() {
       const transformedFiles = rawFiles
           .map((f: any) => {
               let folderId = f.folderId || f.folder;
-              if (typeof folderId === 'object' && folderId !== null) {
-                  folderId = folderId._id || folderId.id;
-              }
+              if (typeof folderId === 'object' && folderId !== null) folderId = folderId._id || folderId.id;
               let folderName = "Uncategorized";
               const parentFolder = myFolders.find((fold: any) => (fold._id || fold.id) === folderId);
               if (parentFolder) folderName = parentFolder.name;
@@ -349,37 +307,45 @@ export default function AISearch() {
     message.success("Workspace synced");
   };
 
+  // --- CORE GENERATION LOGIC ---
   const handleGenerate = async () => {
-    // Validation
+    setInterruptedMessage(null); // Clear any previous warning
+    
     if (inputType === "keyword" && !topic.trim()) return message.error("Please enter a topic.");
     if (inputType === "file" && !selectedFileId) return message.error("Please select a file from your workspace.");
 
-    // --- 1. SET PERSISTENCE STATE ---
-    // Save that we are generating, so if user leaves and comes back, we know.
-    const generationState = {
-        isGenerating: true,
-        inputType,
-        topic: inputType === 'keyword' ? topic : null,
-        fileId: inputType === 'file' ? selectedFileId : null,
-        reportType,
-        progress: 5,
-        startTime: Date.now()
-    };
-    localStorage.setItem(GEN_STATE_KEY, JSON.stringify(generationState));
-
+    // 1. Lock UI
     setIsGenerating(true);
     setProgress(5);
-    setGenerationStep("Initializing AI Agents...");
-    startProgressSimulation(5);
+    setGenerationStep("Initializing request...");
 
-    // Basic details for the report entry
-    const selectedFileObj = workspaceFiles.find(f => f.id === selectedFileId);
-    const selectedFileName = inputType === 'file' 
-      ? selectedFileObj?.name || "Unknown File"
-      : topic;
-    
-    const timestamp = new Date().toISOString();
-    const formattedDate = new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute:'2-digit' });
+    // 2. Persist State (In case of accidental refresh, inputs are saved)
+    const jobState = {
+        inputType,
+        topic,
+        fileId: selectedFileId,
+        reportType,
+        startTime: Date.now()
+    };
+    localStorage.setItem(ACTIVE_JOB_KEY, JSON.stringify(jobState));
+
+    // 3. Fake Progress Simulation (Since we don't have status route)
+    if (progressInterval.current) clearInterval(progressInterval.current);
+    progressInterval.current = setInterval(() => {
+        setProgress((prev) => {
+            if (prev >= 90) return prev; // Stall at 90% until real response comes
+            // Random small increments
+            return prev + Math.floor(Math.random() * 5) + 1;
+        });
+        
+        // Cycle messages to keep user engaged
+        setGenerationStep((prev) => {
+            if (prev === "Initializing request...") return "Analyzing Data Points...";
+            if (prev === "Analyzing Data Points...") return "Cross-referencing Intelligence...";
+            if (prev === "Cross-referencing Intelligence...") return "Structuring Final Report...";
+            return prev;
+        });
+    }, 800);
 
     const formData = new FormData();
     formData.append("reportType", reportType);
@@ -388,79 +354,74 @@ export default function AISearch() {
         formData.append("keyword", topic);
     } else {
         formData.append("fileId", selectedFileId || "");
-        setGenerationStep("Analyzing Workspace File...");
     }
 
     try {
-        // Send Request
+        // 4. Send Request (This Promise holds the connection)
         const response = await Instance.post("/auth/report/analyze", formData, {
-            headers: {
-                "Content-Type": "multipart/form-data",
-            }
+            headers: { "Content-Type": "multipart/form-data" }
         });
-      
-        // --- SUCCESS HANDLER ---
-        clearStorageState(); // Remove the "Busy" state from storage
-        setProgress(100);
-        setGenerationStep("Compiling PDF...");
+
+        // 5. Handle Success
+        clearInterval(progressInterval.current as NodeJS.Timeout);
         
-        const downloadLink = response.data?.downloadUrl || response.data?.data?.generatedReportPath;
-
-        // Create Report Object
-        const newReport = {
-            id: Date.now(),
-            title: selectedFileName,
-            type: reportType,
-            format: "PDF",
-            date: formattedDate,
-            timestamp: timestamp,
-            status: "Ready", 
-            downloadUrl: downloadLink 
-        };
-
-        setReports((prev) => [newReport, ...prev]);
-        setCurrentReport(newReport);
-
-        // --- GLOBAL NOTIFICATION ---
-        // Save to local storage so UserDashboard can pick it up
-        localStorage.setItem(NOTIFICATION_KEY, JSON.stringify(newReport));
+        const result = response.data.data || response.data; // Adjust based on your API structure
+        handleCompletion({
+            ...result,
+            title: result.title || (inputType === 'file' ? "Workspace File Report" : topic),
+            downloadUrl: result.downloadUrl || result.generatedReportPath
+        });
         
-        setTimeout(() => {
-            setIsGenerating(false);
-            setProgress(0);
-            setGenerationStep("");
-            setShowSuccessModal(true);
-            message.success("Report stored in Generated Reports");
-        }, 800);
-
-        setTopic("");
-        setSelectedFileId(null);
-      
     } catch (error: any) {
         console.error("Report Generation Failed:", error);
         
-        // --- ERROR HANDLER ---
-        clearStorageState(); // Clear the persistent state so it doesn't get stuck on reload
+        // Handle Failure
+        clearInterval(progressInterval.current as NodeJS.Timeout);
         setIsGenerating(false);
-        setProgress(0);
-        setGenerationStep("");
-
-        const failedReport = {
-            id: Date.now(),
-            title: selectedFileName,
-            type: reportType,
-            format: "N/A",
-            date: formattedDate,
-            timestamp: timestamp,
-            status: "Failed",
-            downloadUrl: null
-        };
+        localStorage.removeItem(ACTIVE_JOB_KEY); 
         
-        setReports((prev) => [failedReport, ...prev]);
-        
-        const errorMsg = error.response?.data?.msg || error.response?.data?.message || error.message || "Analysis Failed";
+        const errorMsg = error.response?.data?.msg || error.message || "Analysis Failed";
         message.error(`Failed: ${errorMsg}`);
     }
+  };
+
+  const handleCompletion = (reportData: any) => {
+      // 1. Clear Active Job Flag
+      localStorage.removeItem(ACTIVE_JOB_KEY);
+
+      // 2. Prepare Data
+      const timestamp = new Date().toISOString();
+      const formattedDate = new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute:'2-digit' });
+
+      const newReport = {
+          id: reportData.id || Date.now(),
+          title: reportData.title,
+          type: reportData.type || reportType,
+          format: "PDF",
+          date: formattedDate,
+          timestamp: timestamp,
+          status: "Ready", 
+          downloadUrl: reportData.downloadUrl 
+      };
+
+      setReports((prev) => [newReport, ...prev]);
+      setCurrentReport(newReport);
+
+      // 3. Global Notification
+      localStorage.setItem(NOTIFICATION_KEY, JSON.stringify(newReport));
+
+      // 4. UI Feedback
+      setIsGenerating(false);
+      setProgress(100);
+      setGenerationStep("Complete");
+      
+      setTimeout(() => {
+          setShowSuccessModal(true);
+          message.success("Analysis Complete");
+          setProgress(0);
+          setTopic("");
+          setSelectedFileId(null);
+      }, 500);
   };
 
   const downloadReport = (report: any) => {
@@ -595,18 +556,27 @@ export default function AISearch() {
                           <div className="bg-slate-100/80 p-1.5 rounded-xl flex items-center self-stretch sm:self-auto">
                             <button 
                                 onClick={() => !isGenerating && setInputType("keyword")} 
-                                className={`flex-1 sm:flex-none px-6 py-2.5 rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-2 ${inputType === "keyword" ? "bg-white text-slate-800 shadow-sm" : "text-slate-500 hover:text-slate-700 hover:bg-slate-200/50"} ${isGenerating ? 'cursor-not-allowed opacity-50' : ''}`}
+                                className={`flex-1 sm:flex-none px-6 py-2.5 rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-2 ${inputType === "keyword" ? "bg-white text-slate-800 shadow-sm" : "text-slate-500 hover:text-slate-700 hover:bg-slate-200/50"} ${(isGenerating) ? 'cursor-not-allowed opacity-50' : ''}`}
                             >
                               <Search size={14} /> Keyword
                             </button>
                             <button 
                                 onClick={() => !isGenerating && setInputType("file")} 
-                                className={`flex-1 sm:flex-none px-6 py-2.5 rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-2 ${inputType === "file" ? "bg-white text-slate-800 shadow-sm" : "text-slate-500 hover:text-slate-700 hover:bg-slate-200/50"} ${isGenerating ? 'cursor-not-allowed opacity-50' : ''}`}
+                                className={`flex-1 sm:flex-none px-6 py-2.5 rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-2 ${inputType === "file" ? "bg-white text-slate-800 shadow-sm" : "text-slate-500 hover:text-slate-700 hover:bg-slate-200/50"} ${(isGenerating) ? 'cursor-not-allowed opacity-50' : ''}`}
                             >
                               <FolderOpenOutlined /> Workspace
                             </button>
                           </div>
                        </div>
+                        
+                       {/* Alert for Interruption */}
+                       {interruptedMessage && (
+                          <div className="bg-orange-50 border border-orange-200 rounded-xl p-4 flex items-center gap-3 animate-in fade-in slide-in-from-top-2">
+                             <WarningFilled className="text-orange-500" />
+                             <p className="text-xs text-orange-800 font-semibold">{interruptedMessage}</p>
+                             <button onClick={() => setInterruptedMessage(null)} className="ml-auto text-orange-400 hover:text-orange-600"><CloseCircleFilled/></button>
+                          </div>
+                       )}
 
                        <div className="space-y-6 bg-slate-50/60 p-8 rounded-3xl border border-slate-100">
                           <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
@@ -631,8 +601,8 @@ export default function AISearch() {
                                   placeholder="Type a company, topic, or keyword..." 
                                   value={topic} 
                                   onChange={(e) => setTopic(e.target.value)} 
-                                  disabled={isGenerating} // Disable during gen
-                                  className="h-14 rounded-xl text-base font-medium border-slate-200 shadow-sm focus:border-orange-500 hover:border-orange-300" 
+                                  disabled={isGenerating}
+                                  className="h-14 rounded-xl text-base font-medium border-slate-200 shadow-sm focus:border-orange-500 hover:border-orange-300 disabled:bg-slate-50 disabled:text-slate-400" 
                                 />
                               ) : (
                                 <Select
@@ -642,7 +612,7 @@ export default function AISearch() {
                                   loading={isLoadingFiles}
                                   value={selectedFileId}
                                   onChange={setSelectedFileId}
-                                  disabled={isGenerating} // Disable during gen
+                                  disabled={isGenerating}
                                   options={workspaceFiles.map(f => ({ 
                                     value: f.id, 
                                     label: (
@@ -678,7 +648,7 @@ export default function AISearch() {
                                 size="large" 
                                 value={reportType} 
                                 onChange={setReportType} 
-                                disabled={isGenerating} // Disable during gen
+                                disabled={isGenerating}
                                 className="w-full h-14" 
                                 options={REPORT_TYPES} 
                                 popupClassName="rounded-xl font-medium p-1"
@@ -692,7 +662,7 @@ export default function AISearch() {
                               <span className="text-xs font-bold text-slate-400 mr-3 flex items-center gap-1 mb-3"><Sparkles size={12} className="text-orange-400"/> Suggested Templates:</span>
                               <div className="flex flex-wrap gap-2">
                                  {QUICK_TEMPLATES.map((t, idx) => (
-                                   <Tag key={idx} className={`cursor-pointer px-4 py-2 rounded-lg border border-slate-200 transition-all text-slate-600 bg-white shadow-sm font-semibold text-xs border-dashed ${isGenerating ? 'opacity-50 cursor-not-allowed' : 'hover:border-orange-300 hover:text-orange-700 hover:bg-orange-50/50'}`} onClick={() => { if(!isGenerating) { setInputType("keyword"); setTopic(t.label); setReportType(t.type); } }}>
+                                   <Tag key={idx} className={`cursor-pointer px-4 py-2 rounded-lg border border-slate-200 transition-all text-slate-600 bg-white shadow-sm font-semibold text-xs border-dashed ${(isGenerating) ? 'opacity-50 cursor-not-allowed' : 'hover:border-orange-300 hover:text-orange-700 hover:bg-orange-50/50'}`} onClick={() => { if(!isGenerating) { setInputType("keyword"); setTopic(t.label); setReportType(t.type); } }}>
                                       {t.label}
                                    </Tag>
                                  ))}
@@ -713,8 +683,9 @@ export default function AISearch() {
                             size="large" 
                             onClick={handleGenerate} 
                             loading={isGenerating} 
+                            disabled={isGenerating}
                             icon={!isGenerating && <ThunderboltFilled />} 
-                            className="bg-slate-900 hover:bg-slate-800 border-none h-14 px-10 rounded-xl text-base font-bold shadow-xl shadow-slate-900/20 hover:scale-[1.02] active:scale-95 transition-all w-full sm:w-auto flex items-center justify-center gap-2"
+                            className="bg-slate-900 hover:bg-slate-800 border-none h-14 px-10 rounded-xl text-base font-bold shadow-xl shadow-slate-900/20 hover:scale-[1.02] active:scale-95 transition-all w-full sm:w-auto flex items-center justify-center gap-2 disabled:bg-slate-300 disabled:text-slate-500"
                           >
                             {isGenerating ? "Analyzing Data..." : "Generate Report"}
                           </AntButton>
@@ -733,11 +704,11 @@ export default function AISearch() {
                                     <div className="flex items-center gap-2 text-white font-bold tracking-wide text-sm uppercase">
                                        <Activity size={16} className="text-green-400" /> System Status
                                     </div>
-                                    <div className="w-2 h-2 bg-green-500 rounded-full shadow-[0_0_10px_#22c55e]" />
+                                    <div className={`w-2 h-2 rounded-full shadow-[0_0_10px_#22c55e] ${isGenerating ? 'bg-orange-500 animate-pulse' : 'bg-green-500'}`} />
                                 </div>
 
                                 <AnimatePresence mode="wait">
-                                  {!isGenerating ? (
+                                  {(!isGenerating) ? (
                                     <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="space-y-6 text-center mt-10">
                                         <div className="w-24 h-24 bg-white/10 rounded-full mx-auto flex items-center justify-center backdrop-blur-md border border-white/10 text-white/50">
                                            <Zap size={40} />
@@ -921,6 +892,7 @@ export default function AISearch() {
     </div>
   );
 };
+
 
 // import React, { useState, useEffect, useRef } from "react";
 // import { motion, AnimatePresence, useMotionValue, useMotionTemplate } from "framer-motion";

@@ -1,7 +1,7 @@
 import axios from "axios";
 
 const Instance = axios.create({
-  baseURL: "http://192.168.11.236:5000/api",
+  baseURL: "http://192.168.11.245:5000/api",
   // baseURL: "https://kavach-pdf-tools-auth.onrender.com/api",
 
   headers: {
