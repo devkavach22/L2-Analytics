@@ -104,3 +104,41 @@ export const getUserLinks = async (req, res) => {
         res.status(500).json({ error: error.message });
     }   
 };
+export const viewFile = async (req, res) => {
+    try {
+        const { fileId } = req.params;
+        
+        // Ensure req.user exists (Middleware should handle this, but safe check)
+        if (!req.user || !req.user.id) {
+            return res.status(401).json({ error: "Unauthorized access" });
+        }
+        
+        const userId = req.user.id; 
+
+        // 1. Find file belonging to this user
+        const file = await File.findOne({ _id: fileId, userId });
+        
+        if (!file) {
+            return res.status(404).json({ error: "File not found or access denied" });
+        }
+
+        // 2. Resolve path
+        // 'path' must be imported at the top of the file
+        const filePath = path.resolve(file.localPath);
+
+        // 3. Stream the file securely
+        // 'fs' must be imported at the top of the file
+        if (fs.existsSync(filePath)) {
+            res.setHeader('Content-Type', file.mimeType || 'application/octet-stream');
+            res.sendFile(filePath);
+        } else {
+            console.error(`File record exists but physical file missing at: ${filePath}`);
+            res.status(404).json({ error: "Physical file missing on server" });
+        }
+
+    } catch (error) { 
+        // Fixed: Ensure the catch variable name matches the one used in console.error
+        console.error("View File Error:", error);
+        res.status(500).json({ error: "Internal Server Error" });
+    }
+};

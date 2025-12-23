@@ -28,6 +28,8 @@ import {
 import { motion, AnimatePresence } from "framer-motion";
 import { clsx, type ClassValue } from "clsx";
 import { twMerge } from "tailwind-merge";
+// --- NEW IMPORT FOR DOC VIEWER ---
+import DocViewer, { DocViewerRenderers } from "@cyntler/react-doc-viewer";
 
 // --- UTILS ---
 function cn(...inputs: ClassValue[]) { return twMerge(clsx(inputs)); }
@@ -59,10 +61,10 @@ const toastVariant = {
 
 // --- REPORT TYPES CONSTANTS ---
 const REPORT_TYPES = [
-    { id: 'summary', label: 'Quick Summary', icon: FileText, desc: 'Key points & executive summary', color: 'bg-blue-50 text-blue-600' },
-    { id: 'detailed', label: 'Deep Dive', icon: Brain, desc: 'Detailed analysis & insights', color: 'bg-purple-50 text-purple-600' },
-    { id: 'compliance', label: 'Compliance Check', icon: ShieldCheck, desc: 'Legal risks & PII detection', color: 'bg-emerald-50 text-emerald-600' },
-    { id: 'sentiment', label: 'Sentiment Analysis', icon: Activity, desc: 'Tone, emotion & intent', color: 'bg-orange-50 text-orange-600' },
+    { id: 'Master Criminal Profile', label: 'Master Criminal Profile', icon: FileText, desc: 'Comprehensive profile & background', color: 'bg-blue-50 text-blue-600' },
+    { id: 'Quick Summary', label: 'Quick Summary', icon: Zap, desc: 'Key points & executive summary', color: 'bg-orange-50 text-orange-600' },
+    { id: 'Deep Dive', label: 'Deep Dive', icon: Brain, desc: 'Detailed analysis & insights', color: 'bg-purple-50 text-purple-600' },
+    { id: 'Compliance Check', label: 'Compliance Check', icon: ShieldCheck, desc: 'Legal risks & PII detection', color: 'bg-emerald-50 text-emerald-600' },
 ];
 
 // --- COMPONENT: GLOW CARD ---
@@ -178,46 +180,113 @@ const trendData = [
   { name: 'Sun', positive: 34, negative: 43, neutral: 21 },
 ];
 
-// --- COMPONENT: FILE VIEWER OVERLAY ---
+// --- COMPONENT: FILE VIEWER OVERLAY (UPDATED WITH REACT-DOC-VIEWER) ---
 const FileViewerOverlay = ({ file, onClose }: { file: FileType; onClose: () => void }) => {
-  const baseURL = "http://192.168.11.236:5000";
+  // Use the correct backend URL
+  const baseURL = "http://192.168.11.245:5000"; 
+  
+  // Ensure we construct a valid URL
   const fileUrl = file.publicPath 
-    ? (file.publicPath.startsWith('http') ? file.publicPath : `${baseURL}${file.publicPath}`) 
-    : null;
-  const ext = file.extension.toLowerCase();
+    ? (file.publicPath.startsWith('http') 
+        ? file.publicPath 
+        : `${baseURL}${file.publicPath.startsWith('/') ? '' : '/'}${file.publicPath}`) 
+    : "";
 
-  const renderContent = () => {
-    if (!fileUrl) return <div className="text-slate-400">File path missing.</div>;
-    if (['jpg', 'jpeg', 'png', 'gif', 'svg'].includes(ext)) return <img src={fileUrl} alt={file.name} className="max-w-full max-h-full object-contain shadow-lg rounded-md" />;
-    if (['mp4', 'webm', 'ogg'].includes(ext)) return <video controls className="max-w-full max-h-full rounded-lg" autoPlay><source src={fileUrl} /></video>;
-    if (['pdf'].includes(ext)) return <iframe src={fileUrl} className="w-full h-full border-none bg-slate-50 rounded-lg shadow-inner" title={file.name} />;
-    return (
-         <div className="flex flex-col items-center justify-center p-10 text-center">
-            <div className="h-24 w-24 bg-orange-50 rounded-full flex items-center justify-center mb-6 text-orange-500 animate-pulse">
-               {getFileIconByExtension(file.extension, "h-12 w-12")}
-            </div>
-            <p className="text-xl font-bold text-slate-800">Preview Not Available</p>
-            <p className="text-slate-500 mt-2 max-w-sm">This file type requires external viewing software.</p>
-            <a href={fileUrl} target="_blank" rel="noreferrer" className="mt-6 px-8 py-3 bg-gradient-to-r from-slate-900 to-slate-800 text-white rounded-xl text-sm font-medium hover:shadow-lg transition-all transform hover:-translate-y-1">Download to View</a>
-         </div>
-    );
-  };
+  // Prepare documents array for React Doc Viewer
+  const docs = [
+    { 
+        uri: fileUrl, 
+        fileName: file.name,
+        fileType: file.extension 
+    }
+  ];
 
   return (
-    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-[200] flex items-center justify-center bg-slate-900/80 backdrop-blur-md p-6" onClick={onClose}>
-      <motion.div initial={{ scale: 0.95, y: 20 }} animate={{ scale: 1, y: 0 }} className="w-full max-w-6xl h-[85vh] flex flex-col rounded-[24px] bg-[#FFFBF5] overflow-hidden shadow-2xl border border-white/20" onClick={(e) => e.stopPropagation()}>
-        <div className="flex items-center justify-between p-4 border-b border-orange-100 bg-white/50 backdrop-blur-xl">
+    <motion.div 
+        key="file-viewer-overlay" // Unique Key added for AnimatePresence
+        initial={{ opacity: 0 }} 
+        animate={{ opacity: 1 }} 
+        exit={{ opacity: 0 }} 
+        className="fixed inset-0 z-[200] flex items-center justify-center bg-slate-900/90 backdrop-blur-md p-6" 
+        onClick={onClose}
+    >
+      <motion.div 
+        initial={{ scale: 0.95, y: 20 }} 
+        animate={{ scale: 1, y: 0 }} 
+        className="w-full max-w-7xl h-[90vh] flex flex-col rounded-[24px] bg-white overflow-hidden shadow-2xl border border-white/20" 
+        onClick={(e) => e.stopPropagation()}
+      >
+        {/* Header */}
+        <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100 bg-white z-10 shrink-0">
           <div className="flex items-center gap-4">
-             <div className="p-2 bg-white rounded-xl shadow-sm border border-orange-100">{getFileIconByExtension(file.extension)}</div>
+             <div className="p-2 bg-orange-50 rounded-xl shadow-sm border border-orange-100 text-orange-500">
+                {getFileIconByExtension(file.extension)}
+             </div>
              <div>
                 <h3 className="font-bold text-slate-800 text-sm truncate max-w-[400px]">{file.name}</h3>
-                <p className="text-[10px] text-slate-500 font-mono">{formatBytes(file.size)}</p>
+                <p className="text-[10px] text-slate-500 font-mono flex gap-2">
+                    {formatBytes(file.size)} <span>•</span> {file.extension.toUpperCase()}
+                </p>
              </div>
           </div>
-          <Button onClick={onClose} variant="ghost" size="icon" className="h-8 w-8 rounded-full hover:bg-orange-100 text-slate-500 hover:text-orange-600 transition-colors"><X className="h-5 w-5" /></Button>
+          <div className="flex items-center gap-2">
+              <a href={fileUrl} download>
+                  <Button variant="outline" size="sm" className="gap-2 h-9 text-xs">
+                      <Download className="h-4 w-4" /> Download
+                  </Button>
+              </a>
+              <Button onClick={onClose} variant="ghost" size="icon" className="h-9 w-9 rounded-full hover:bg-slate-100 text-slate-500">
+                  <X className="h-5 w-5" />
+              </Button>
+          </div>
         </div>
-        <div className="flex-1 overflow-hidden relative bg-slate-100/50 flex items-center justify-center p-4">
-            <div className="w-full h-full flex items-center justify-center relative z-10">{renderContent()}</div>
+
+        {/* Viewer Content */}
+        <div className="flex-1 overflow-hidden relative bg-slate-100">
+            {fileUrl ? (
+                <DocViewer
+                    documents={docs}
+                    pluginRenderers={DocViewerRenderers}
+                    style={{ height: "100%", width: "100%" }}
+                    config={{
+                        header: {
+                            disableHeader: true,
+                            disableFileName: true,
+                            retainURLParams: false
+                        },
+                        loadingRenderer: {
+                            overrideComponent: () => (
+                                <div className="flex flex-col items-center justify-center h-full text-slate-400 gap-2">
+                                    <Loader2 className="h-8 w-8 animate-spin text-orange-500" />
+                                    <span className="text-sm font-medium">Loading Document...</span>
+                                </div>
+                            )
+                        },
+                        // Fallback Renderer: Handles files that cannot be viewed (e.g., .doc on localhost)
+                        noRenderer: {
+                            overrideComponent: () => (
+                                <div className="flex flex-col items-center justify-center h-full p-8 text-center bg-slate-50">
+                                    <div className="h-16 w-16 bg-slate-200 rounded-full flex items-center justify-center mb-4 text-slate-400">
+                                        <FileIcon className="h-8 w-8" />
+                                    </div>
+                                    <p className="text-lg font-bold text-slate-700">Preview Unavailable</p>
+                                    <p className="text-sm text-slate-500 mt-2 mb-6 max-w-sm">
+                                        This file cannot be previewed directly in the browser. 
+                                        {['doc', 'docx'].includes(file.extension) && " (Office files require a public URL to view)"}
+                                    </p>
+                                    <a href={fileUrl} download className="px-6 py-2 bg-slate-900 text-white rounded-lg text-sm font-bold hover:bg-slate-800 transition-colors">
+                                        Download File
+                                    </a>
+                                </div>
+                            )
+                        }
+                    }}
+                />
+            ) : (
+                <div className="flex items-center justify-center h-full text-slate-400">
+                    File URL not found.
+                </div>
+            )}
         </div>
       </motion.div>
     </motion.div>
@@ -279,7 +348,7 @@ export default function UserDashboard() {
   // Report Generation State
   const [showReportModal, setShowReportModal] = useState(false);
   const [reportTarget, setReportTarget] = useState<ReportTarget>(null);
-  const [selectedReportType, setSelectedReportType] = useState<string>("summary");
+  const [selectedReportType, setSelectedReportType] = useState<string>("Master Criminal Profile");
 
   // Chat & Link Processing State
   const [activeChatLink, setActiveChatLink] = useState<LinkType | null>(null);
@@ -542,28 +611,49 @@ export default function UserDashboard() {
       if(e.target.files && e.target.files.length > 0) initiateUpload(e.target.files);
   };
 
-  // --- REPORT GENERATION HANDLERS ---
+  // --- REPORT GENERATION HANDLERS (API INTEGRATION) ---
   const handleInitiateReport = (type: 'folder' | 'file', id: string, name: string) => {
       setReportTarget({ type, id, name });
-      setSelectedReportType("summary");
+      setSelectedReportType("Master Criminal Profile"); // Default
       setShowReportModal(true);
   };
 
   const handleGenerateReport = async () => {
       if(!reportTarget) return;
       
-      setShowReportModal(false);
-      showToast(`Generating ${selectedReportType} report for ${reportTarget.name}...`, "info");
+      const targetId = reportTarget.id;
+      const targetType = reportTarget.type;
+      const reportType = selectedReportType;
+      const targetName = reportTarget.name;
 
-      // Mock API call - in real app replace with your endpoint
-      // Example: await Instance.post('/auth/report/generate', { targetId: reportTarget.id, type: selectedReportType });
-      
+      setShowReportModal(false);
+      showToast(`Generating ${reportType} for ${targetName}...`, "info");
+
       try {
-        await new Promise(r => setTimeout(r, 2000));
-        showToast("Report Generation Queued. You will be notified.", "success");
+        const token = localStorage.getItem("token"); // Get token from local storage
+        
+        // Construct the payload
+        const payload = {
+            targetId: targetId,
+            targetType: targetType, 
+            reportType: reportType
+        };
+
+        // Call the API endpoint
+        await Instance.post('/auth/report/analyze', payload, {
+            headers: {
+                'Authorization': token ? token : '',
+                'Content-Type': 'application/json'
+            }
+        });
+
+        showToast("Report generation started. Check back soon.", "success");
         setReportTarget(null);
-      } catch (e) {
-        showToast("Failed to start report generation", "error");
+
+      } catch (error: any) {
+        console.error("Report API Error:", error);
+        const errorMsg = error.response?.data?.message || "Failed to start report generation.";
+        showToast(errorMsg, "error");
       }
   };
 
@@ -759,6 +849,7 @@ export default function UserDashboard() {
     <AnimatePresence>
       {toast && (
         <motion.div
+          key="toast-notification"
           variants={toastVariant}
           initial="hidden"
           animate="visible"
@@ -789,6 +880,7 @@ export default function UserDashboard() {
       if (!activeChatLink) return null;
       return (
         <motion.div 
+            key="chat-overlay" // Added KEY
             initial={{ opacity: 0, y: 20, scale: 0.95 }}
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: 20, scale: 0.95 }}
@@ -862,6 +954,7 @@ export default function UserDashboard() {
     if (!viewingTextLink) return null;
     return (
         <motion.div 
+            key="text-viewer" // Added KEY
             initial={{ opacity: 0 }} 
             animate={{ opacity: 1 }} 
             exit={{ opacity: 0 }} 
@@ -957,6 +1050,7 @@ export default function UserDashboard() {
   // --- UPLOAD METADATA MODAL ---
   const renderUploadModal = () => (
     <motion.div 
+        key="upload-modal" // Added KEY
         className="fixed inset-0 z-[250] bg-slate-900/70 backdrop-blur-sm flex items-center justify-center p-4"
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}
@@ -1030,6 +1124,7 @@ export default function UserDashboard() {
   // --- REPORT GENERATION MODAL ---
   const renderReportModal = () => (
       <motion.div 
+        key="report-modal" // Added KEY
         className="fixed inset-0 z-[250] bg-slate-900/70 backdrop-blur-sm flex items-center justify-center p-4"
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}
@@ -1098,6 +1193,7 @@ export default function UserDashboard() {
   // --- RENDER POPUP ---
   const renderWorkspacePopup = () => (
     <motion.div 
+        key="workspace-popup" // Added KEY
         className="fixed inset-0 z-[100] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-2"
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}
@@ -1345,13 +1441,6 @@ export default function UserDashboard() {
                                             </Button>
                                             {activeFolderMenu === folder.id && (
                                                 <div className="absolute right-0 top-full mt-1 w-32 bg-white rounded-xl shadow-xl border border-orange-100 z-[50] overflow-hidden py-1">
-                                                    <button 
-                                                        onClick={() => { setActiveFolderMenu(null); handleInitiateReport('folder', folder.id, folder.name); }}
-                                                        className="w-full text-left px-3 py-2 hover:bg-purple-50 text-purple-600 text-xs flex items-center gap-2 font-bold"
-                                                    >
-                                                        <Sparkles className="h-3 w-3" /> Analyze
-                                                    </button>
-                                                    <div className="h-px bg-slate-100 my-1"></div>
                                                     <button className="w-full text-left px-3 py-2 hover:bg-orange-50 text-slate-600 text-xs flex items-center gap-2 font-medium">
                                                         <Pencil className="h-3 w-3" /> Edit
                                                     </button>
@@ -1533,7 +1622,13 @@ export default function UserDashboard() {
                     <tbody className="divide-y divide-slate-50">
                         {paginatedFiles.map((file, i) => {
                             const fileFolder = folders.find(f => String(f.id) === String(file.folderId));
-                            const fileUrl = file.publicPath ? (file.publicPath.startsWith('http') ? file.publicPath : `http://192.168.11.236:5000${file.publicPath}`) : "#";
+                            // UPDATED: Use same logic for download link
+                            const fileUrl = file.publicPath 
+                                ? (file.publicPath.startsWith('http') 
+                                    ? file.publicPath 
+                                    : `http://192.168.11.245:5000${file.publicPath.startsWith('/') ? '' : '/'}${file.publicPath}`) 
+                                : "#";
+                            
                             return (
                             <tr key={file.id} className="group hover:bg-orange-50/30 transition-colors">
                                 <td className="px-4 py-2.5">
@@ -1550,7 +1645,10 @@ export default function UserDashboard() {
                                         </div>
                                     </div>
                                 </td>
-                                <td className="px-4 py-2.5"><Badge variant="outline" className="text-[10px] text-slate-500 border-slate-200 bg-slate-50">{file.extension.toUpperCase()}</Badge></td>
+                                <td className="px-4 py-2.5">
+                                    {/* MODIFIED: Show Icon instead of Badge */}
+                                    {getFileIconByExtension(file.extension, "h-6 w-6")}
+                                </td>
                                 <td className="px-4 py-2.5 text-right w-36">
                                     <div className="flex justify-end gap-1">
                                         <Button 

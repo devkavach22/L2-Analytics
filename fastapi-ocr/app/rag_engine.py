@@ -21,12 +21,14 @@ from langchain.chains import RetrievalQA
 
 # ---------------- REPORT GENERATION IMPORTS ----------------
 try:
-    from report_generator import render_html_report
+    from .generators.report_generator import render_html_report
 except ImportError:
-    # Fallback if report_generator is not in the same directory yet
-    print("Warning: report_generator module not found. PDF generation may fail.")
-    def render_html_report(data, report_type, user_id):
-        return f"Report generated: {data.get('title')}"
+    try:
+        from report_generator import render_html_report
+    except ImportError:
+        print("Warning: report_generator module not found. PDF generation may fail.")
+        def render_html_report(data, report_type, user_id):
+            return f"Error: PDF Generator not available. Content: {data.get('title')}"
 
 # ---------------- OPENAI IMPORTS (OPTIONAL) ----------------
 try:
@@ -35,15 +37,14 @@ except ImportError:
     OpenAIEmbeddings = None
     ChatOpenAI = None
 
-# ---------------- OLLAMA IMPORTS (COMMENTED OUT AS REQUESTED) ----------------
-# try:
-#     from langchain_community.llms import Ollama
-#     from langchain_community.embeddings import OllamaEmbeddings
-# except ImportError:
-#     Ollama = None
-#     OllamaEmbeddings = None
-
 load_dotenv()
+
+# Define Paths for RAG as well
+REPORTS_DIR = os.path.join(os.getcwd(), "static", "reports")
+REPORTS_URL_PREFIX = "/static/reports/"
+
+if not os.path.exists(REPORTS_DIR):
+    os.makedirs(REPORTS_DIR, exist_ok=True)
 
 # =========================================================
 # 1. CONFIGURATION
@@ -76,7 +77,7 @@ CHUNK_OVERLAP = int(os.getenv("CHUNK_OVERLAP", 100))
 # RAG & LLM Generation Configuration
 RETRIEVAL_K = int(os.getenv("RETRIEVAL_K", 4))
 LLM_TEMPERATURE = float(os.getenv("LLM_TEMPERATURE", 0.2))
-LLM_MAX_NEW_TOKENS = int(os.getenv("LLM_MAX_NEW_TOKENS", 384))
+LLM_MAX_NEW_TOKENS = int(os.getenv("LLM_MAX_NEW_TOKENS", 1024)) # Increased for detailed reports
 
 # Initialize Mongo Client
 client = MongoClient(MONGO_URL)
@@ -92,11 +93,6 @@ def _get_embedding_model():
         print("🔹 Using OpenAI Embeddings")
         return OpenAIEmbeddings(openai_api_key=OPENAI_API_KEY)
     
-    # --- OLLAMA EMBEDDINGS (COMMENTED OUT) ---
-    # if not OPENAI_API_KEY and OllamaEmbeddings:
-    #     print("🔹 Using Ollama Embeddings")
-    #     return OllamaEmbeddings(model="llama3")
-
     print(f"🔹 Using Hugging Face Embeddings: {HUGGINGFACE_EMBEDDING_MODEL}")
     return HuggingFaceEmbeddings(model_name=HUGGINGFACE_EMBEDDING_MODEL)
 
@@ -120,11 +116,6 @@ def _initialize_llm():
             model_name="gpt-4o-mini",
             temperature=LLM_TEMPERATURE
         )
-    
-    # --- OLLAMA LLM (COMMENTED OUT) ---
-    # if not HUGGINGFACE_API_TOKEN and not OPENAI_API_KEY:
-    #     print("🔹 Using Ollama LLM")
-    #     return Ollama(model="llama3", temperature=LLM_TEMPERATURE)
 
     if not HUGGINGFACE_API_TOKEN:
         raise ValueError("Neither OPENAI_API_KEY nor HUGGINGFACE_API_TOKEN found.")
@@ -161,7 +152,7 @@ async def store_embeddings_async(text_content, metadata):
     return await loop.run_in_executor(None, store_embeddings, text_content, metadata)
 
 # =========================================================
-# 5. RETRIEVAL LOGIC
+# 5. RETRIEVAL LOGIC (OPTIMIZED)
 # =========================================================
 
 def _fetch_docs(query, user_id, source=None, k=RETRIEVAL_K, strict_source=True):
@@ -192,7 +183,7 @@ def generate_multi_queries(original_question, llm):
     return list(dict.fromkeys(queries))
 
 # =========================================================
-# 6. CHAT & ORIGINAL VIDEO FUNCTIONS
+# 6. CHAT & REPORT FUNCTIONS
 # =========================================================
 
 def chat_with_video(
@@ -215,26 +206,34 @@ def chat_with_video(
 
     seen_contents = set()
 
-    # Original Logic: Loop through queries (Simple)
-    # Kept as is to preserve original stability
-    for q in queries:
-        docs = _fetch_docs(q, user_id, source=video_url, k=k, strict_source=True)
+    def fetch_strict(q):
+        return _fetch_docs(q, user_id, source=video_url, k=k, strict_source=True)
+
+    def fetch_relaxed(q):
+        return _fetch_docs(q, user_id, source=None, k=k, strict_source=False)
+
+    with ThreadPoolExecutor() as executor:
+        strict_results = list(executor.map(fetch_strict, queries))
+
+    for docs in strict_results:
         for doc in docs:
             if doc.page_content not in seen_contents:
                 seen_contents.add(doc.page_content)
                 final_docs.append(doc)
 
     if not final_docs and video_url:
-        print("⚠️ No strict matches. Relaxed search...")
-        for q in queries:
-            docs = _fetch_docs(q, user_id, source=None, k=k, strict_source=False)
+        print("⚠️ No strict matches. Parallel relaxed search...")
+        with ThreadPoolExecutor() as executor:
+            relaxed_results = list(executor.map(fetch_relaxed, queries))
+            
+        for docs in relaxed_results:
             for doc in docs:
                 if doc.page_content not in seen_contents:
                     seen_contents.add(doc.page_content)
                     final_docs.append(doc)
 
     if not final_docs:
-        return "I don't have enough information from the video transcript to answer that."
+        return "I don't have enough information to answer that."
 
     context = "\n\n".join(d.page_content for d in final_docs)
 
@@ -256,30 +255,65 @@ def chat_with_video(
     return chain.invoke({"context": context, "question": question})
 
 
-# --- OPTION B: RetrievalQA Chain (Existing) ---
-def chat_using_retrieval_qa(question: str, user_id: str, video_url: str):
+def generate_rag_report(topic: str, user_id: str, report_format: str = "detailed", k: int = 4):
     llm = _initialize_llm()
-    store = get_vector_store()
+    queries = generate_multi_queries(topic, llm)
     
-    retriever = store.as_retriever(
-        search_type="similarity",
-        search_kwargs={
-            "k": RETRIEVAL_K,
-            "pre_filter": {"user_id": {"$eq": user_id}, "source": {"$eq": video_url}}
-        }
-    )
+    final_docs = []
+    seen_contents = set()
 
-    qa_chain = RetrievalQA.from_chain_type(
-        llm=llm,
-        chain_type="stuff",
-        retriever=retriever,
-        return_source_documents=True
-    )
-    result = qa_chain.invoke({"query": question})
-    return result["result"]
+    def fetch_global(q):
+        return _fetch_docs(q, user_id, source=None, k=k, strict_source=False)
+
+    with ThreadPoolExecutor() as executor:
+        results = list(executor.map(fetch_global, queries))
+
+    for docs in results:
+        for doc in docs:
+            if doc.page_content not in seen_contents:
+                seen_contents.add(doc.page_content)
+                final_docs.append(doc)
+
+    if not final_docs:
+        return "Insufficient data found in your knowledge base."
+
+    context = "\n\n".join(d.page_content for d in final_docs)
+
+    prompt_text = f"""
+    You are an expert AI Analyst. 
+    Create a {report_format} report on the topic: "{{topic}}".
+    Base your report ONLY on the following Context.
+
+    Context:
+    {{context}}
+
+    Report Structure:
+    1. Executive Summary
+    2. Key Findings & Insights
+    3. Detailed Analysis
+    4. Conclusion
+
+    Format the output in clean Markdown.
+    """
+
+    prompt = PromptTemplate(template=prompt_text, input_variables=["context", "topic"])
+    chain = prompt | llm | StrOutputParser()
+
+    return chain.invoke({"context": context, "topic": topic})
 
 # =========================================================
-# 7. NEW: LAW ENFORCEMENT & CASE REPORT GENERATION
+# 7. ASYNC ORCHESTRATION
+# =========================================================
+async def chat_with_video_async(*args, **kwargs):
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(None, chat_with_video, *args, **kwargs)
+
+async def generate_rag_report_async(*args, **kwargs):
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(None, generate_rag_report, *args, **kwargs)
+
+# =========================================================
+# 8. LAW-ENFORCEMENT CASE REPORT GENERATION (ADDED)
 # =========================================================
 
 CASE_REPORT_PROMPTS = {
@@ -339,15 +373,29 @@ CASE_REPORT_PROMPTS = {
     Context:
     {context}
     """,
-    
-    "default_report": """
-    Create a detailed analysis report on the following topic.
-    Topic: {topic}
+
+    "gang_network": """
+    Create a Gang Network & Association Report.
     Structure:
-    1. Executive Summary
-    2. Detailed Findings
-    3. Conclusion
-    
+    1. Network Overview & Hierarchy
+    2. Key Individuals & Roles
+    3. Relationship Mapping (Proven vs Suspected)
+    4. Shared Activities & Areas of Operation
+    5. Threat Assessment
+
+    Context:
+    {context}
+    """,
+
+    "court_ready_summary": """
+    Create a Court-Ready Legal Summary (Charge Sheet Helper).
+    Structure:
+    1. Accused Details
+    2. Summary of Allegations
+    3. Marshaled Evidence (Connecting Accused to Crime)
+    4. Procedural Compliance Check
+    5. Witness List Summary
+
     Context:
     {context}
     """
@@ -356,89 +404,95 @@ CASE_REPORT_PROMPTS = {
 def generate_case_report(
     report_type: str,
     user_id: str,
-    k: int = 6
+    k: int = 4
 ):
     """
-    Generates law-enforcement reports.
-    Optimized: Uses ThreadPoolExecutor to fetch context faster without blocking.
+    Generates court-safe, law-enforcement reports using the RAG engine.
     """
     llm = _initialize_llm()
 
-    # Determine query based on report type to cast a wide net
-    query = report_type.replace("_", " ")
+    # Reuse existing retrieval function
+    # Search broadly using the report type name to gather relevant case files
+    search_term = report_type.replace("_", " ")
+    docs = _fetch_docs(
+        query=search_term,
+        user_id=user_id,
+        source=None,
+        k=k,
+        strict_source=False
+    )
 
-    # Parallel Retrieval for Speed (New Logic applied only to this new function)
-    final_docs = []
-    seen = set()
-
-    # We can generate multiple queries here for better recall
-    queries = generate_multi_queries(query, llm)
-    
-    def fetch_task(q):
-        return _fetch_docs(q, user_id, source=None, k=k, strict_source=False)
-
-    # Fast parallel fetch
-    with ThreadPoolExecutor() as executor:
-        results = list(executor.map(fetch_task, queries))
-
-    for docs in results:
-        for doc in docs:
-            if doc.page_content not in seen:
-                seen.add(doc.page_content)
-                final_docs.append(doc)
-
-    if not final_docs:
+    if not docs:
         return "No sufficient data found in the knowledge base to generate this report."
 
-    context = "\n\n".join(d.page_content for d in final_docs)
+    context = "\n\n".join(d.page_content for d in docs)
 
-    # Select Prompt
-    # Normalize keys to match user input roughly
-    selected_template = CASE_REPORT_PROMPTS.get("default_report")
+    # Select Prompt based on report type
+    # Normalize report_type string
+    normalized_type = report_type.lower().replace(" ", "_")
+    
+    # Fallback mechanisms for prompt selection
+    selected_prompt = CASE_REPORT_PROMPTS.get("fir_case_analysis") # Default
     for key in CASE_REPORT_PROMPTS:
-        if key in report_type.lower():
-            selected_template = CASE_REPORT_PROMPTS[key]
+        if key in normalized_type:
+            selected_prompt = CASE_REPORT_PROMPTS[key]
             break
-            
+
     prompt = PromptTemplate(
-        template=selected_template,
-        input_variables=["context", "topic"] if "topic" in selected_template else ["context"]
+        template=selected_prompt,
+        input_variables=["context"]
     )
 
     print(f"👮‍♂️ Generating Law Enforcement Report: {report_type}")
     
-    # Run Chain
-    input_vars = {"context": context}
-    if "topic" in selected_template:
-        input_vars["topic"] = report_type
-
+    # Generate Content
     chain = prompt | llm | StrOutputParser()
-    report_text = chain.invoke(input_vars)
+    report_text = chain.invoke({"context": context})
 
-    # Prepare for PDF
+    # Prepare data for PDF generation
+    # FIX: Ensure data structure matches what render_html_report likely expects (from agent_orchestrator usage)
+    clean_report_type = report_type.strip()
+    
     data = {
-        "title": report_type.replace("_", " ").title(),
+        "title": clean_report_type.replace("_", " ").title(),
         "executive_summary": "Automated Law Enforcement Analysis generated from Vector Knowledge Base.",
-        "report": report_text
+        "report": report_text,
+        "final_report_text": report_text # Added for consistency with AgenticReportPipeline
     }
 
-    # Render PDF/HTML
-    return render_html_report(
+#     # Render PDF/HTML
+#     return render_html_report(
+#         data=data,
+#         report_type=clean_report_type,
+#         user_id=str(user_id)
+#     )
+
+# async def generate_case_report_async(report_type: str, user_id: str, k: int = 4):
+#     loop = asyncio.get_running_loop()
+#     return await loop.run_in_executor(None, generate_case_report, report_type, user_id, k)
+
+# Pass the REPORTS_DIR explicitly
+    saved_file_path = render_html_report(
         data=data,
-        report_type=report_type,
-        user_id=user_id
+        report_type=clean_report_type,
+        user_id=str(user_id),
+        folder_path=REPORTS_DIR
     )
 
-# =========================================================
-# 8. ASYNC ORCHESTRATION
-# =========================================================
-async def chat_with_video_async(*args, **kwargs):
-    loop = asyncio.get_running_loop()
-    return await loop.run_in_executor(None, chat_with_video, *args, **kwargs)
+    # 5. Construct URL
+    if saved_file_path and os.path.exists(saved_file_path):
+        filename = os.path.basename(saved_file_path)
+        return {
+            "success": True,
+            "report_text": report_text,
+            "download_link": f"{REPORTS_URL_PREFIX}{filename}"
+        }
+    
+    return {"success": False, "report_text": report_text, "error": "File generation failed"}
 
-async def generate_case_report_async(*args, **kwargs):
+async def generate_case_report_async(report_type: str, user_id: str, k: int = 4):
     loop = asyncio.get_running_loop()
-    return await loop.run_in_executor(None, generate_case_report, *args, **kwargs)
+    return await loop.run_in_executor(None, generate_case_report, report_type, user_id, k)
 
 # # app/rag_engine.py
 

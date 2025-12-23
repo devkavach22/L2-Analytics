@@ -14,6 +14,7 @@ import axios from "axios";
 import Link from "../models/Link.js";
 import pkg from 'uuid';
 const { v4: uuidv4 } = pkg;
+import { viewFile } from "../controllers/authController.js";
 
 const router = express.Router();
 const LOCAL_STORAGE_PATH = process.env.LOCAL_STORAGE_PATH || "./uploads";
@@ -417,6 +418,8 @@ router.post("/chat/ask", auth, async (req, res) => {
         }
     }
 });
+
+router.get("/file/view/:fileId", auth,viewFile);
 
 // History: Get past reports
 // router.get("/report/history", auth, getHistory);
