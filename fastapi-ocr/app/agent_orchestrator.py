@@ -316,13 +316,14 @@ class AgenticReportPipeline:
         # Sanitize name for file system
         clean_name = self._sanitize_filename(report_type)
         
-        # Call generator with PHYSICAL path
-        # Note: render_html_report likely returns the FULL ABSOLUTE PATH of the saved file
+        # Call generator
+        # FIX: Removed 'folder_path' argument to resolve TypeError. 
+        # The render_html_report function definition likely does not accept this argument.
         saved_file_path = render_html_report(
             results, 
             clean_name, 
-            str(user_id),
-            folder_path=self.reports_dir # PASSING THE STATIC/REPORTS PATH
+            str(user_id)
+            # folder_path=self.reports_dir # <-- REMOVED TO FIX ERROR
         )
 
         # 6. Construct URL for Frontend

@@ -180,30 +180,69 @@ const trendData = [
   { name: 'Sun', positive: 34, negative: 43, neutral: 21 },
 ];
 
-// --- COMPONENT: FILE VIEWER OVERLAY (UPDATED WITH REACT-DOC-VIEWER) ---
+// --- COMPONENT: FILE VIEWER OVERLAY (UPDATED WITH SECURE BLOB FETCH) ---
 const FileViewerOverlay = ({ file, onClose }: { file: FileType; onClose: () => void }) => {
-  // Use the correct backend URL
-  const baseURL = "http://192.168.11.245:5000"; 
-  
-  // Ensure we construct a valid URL
-  const fileUrl = file.publicPath 
-    ? (file.publicPath.startsWith('http') 
-        ? file.publicPath 
-        : `${baseURL}${file.publicPath.startsWith('/') ? '' : '/'}${file.publicPath}`) 
-    : "";
+  const [blobUrl, setBlobUrl] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(false);
+
+  useEffect(() => {
+    let isActive = true;
+
+    const fetchFile = async () => {
+      try {
+        setLoading(true);
+        setError(false);
+        const token = localStorage.getItem("token");
+
+        // 1. Fetch file as BLOB using the secure route
+        // This attaches the Authorization header automatically if using interceptors, 
+        // but we explicitly add it here as requested.
+        const response = await Instance.get(`/auth/file/view/${file.id}`, {
+          responseType: "blob",
+          headers: {
+            'Authorization': token // Passing token in headers
+          }
+        });
+
+        if (isActive) {
+          // 2. Create a local URL for the blob
+          const url = URL.createObjectURL(response.data);
+          setBlobUrl(url);
+        }
+      } catch (err) {
+        console.error("Error fetching file for preview:", err);
+        if (isActive) setError(true);
+      } finally {
+        if (isActive) setLoading(false);
+      }
+    };
+
+    if (file.id) {
+        fetchFile();
+    }
+
+    // Cleanup blob URL on unmount
+    return () => {
+      isActive = false;
+      if (blobUrl) {
+        URL.revokeObjectURL(blobUrl);
+      }
+    };
+  }, [file.id]);
 
   // Prepare documents array for React Doc Viewer
-  const docs = [
+  const docs = blobUrl ? [
     { 
-        uri: fileUrl, 
+        uri: blobUrl, 
         fileName: file.name,
         fileType: file.extension 
     }
-  ];
+  ] : [];
 
   return (
     <motion.div 
-        key="file-viewer-overlay" // Unique Key added for AnimatePresence
+        key="file-viewer-overlay"
         initial={{ opacity: 0 }} 
         animate={{ opacity: 1 }} 
         exit={{ opacity: 0 }} 
@@ -230,8 +269,8 @@ const FileViewerOverlay = ({ file, onClose }: { file: FileType; onClose: () => v
              </div>
           </div>
           <div className="flex items-center gap-2">
-              <a href={fileUrl} download>
-                  <Button variant="outline" size="sm" className="gap-2 h-9 text-xs">
+              <a href={blobUrl || "#"} download={file.name}>
+                  <Button variant="outline" size="sm" className="gap-2 h-9 text-xs" disabled={!blobUrl}>
                       <Download className="h-4 w-4" /> Download
                   </Button>
               </a>
@@ -242,8 +281,18 @@ const FileViewerOverlay = ({ file, onClose }: { file: FileType; onClose: () => v
         </div>
 
         {/* Viewer Content */}
-        <div className="flex-1 overflow-hidden relative bg-slate-100">
-            {fileUrl ? (
+        <div className="flex-1 overflow-hidden relative bg-slate-100 w-full">
+            {loading ? (
+                <div className="flex flex-col items-center justify-center h-full text-slate-400 gap-2">
+                    <Loader2 className="h-8 w-8 animate-spin text-orange-500" />
+                    <span className="text-sm font-medium">Fetching Secure Document...</span>
+                </div>
+            ) : error || !blobUrl ? (
+                <div className="flex flex-col items-center justify-center h-full text-slate-400 gap-2">
+                    <AlertCircle className="h-8 w-8 text-red-400" />
+                    <span className="text-sm font-medium text-red-500">Failed to load document.</span>
+                </div>
+            ) : (
                 <DocViewer
                     documents={docs}
                     pluginRenderers={DocViewerRenderers}
@@ -255,26 +304,25 @@ const FileViewerOverlay = ({ file, onClose }: { file: FileType; onClose: () => v
                             retainURLParams: false
                         },
                         loadingRenderer: {
-                            overrideComponent: () => (
+                            overrideComponent: (props) => (
                                 <div className="flex flex-col items-center justify-center h-full text-slate-400 gap-2">
                                     <Loader2 className="h-8 w-8 animate-spin text-orange-500" />
-                                    <span className="text-sm font-medium">Loading Document...</span>
+                                    <span className="text-sm font-medium">Rendering Document...</span>
                                 </div>
                             )
                         },
-                        // Fallback Renderer: Handles files that cannot be viewed (e.g., .doc on localhost)
                         noRenderer: {
-                            overrideComponent: () => (
+                            overrideComponent: (props) => (
                                 <div className="flex flex-col items-center justify-center h-full p-8 text-center bg-slate-50">
                                     <div className="h-16 w-16 bg-slate-200 rounded-full flex items-center justify-center mb-4 text-slate-400">
                                         <FileIcon className="h-8 w-8" />
                                     </div>
-                                    <p className="text-lg font-bold text-slate-700">Preview Unavailable</p>
+                                    <p className="text-lg font-bold text-slate-700">No Preview Available</p>
                                     <p className="text-sm text-slate-500 mt-2 mb-6 max-w-sm">
-                                        This file cannot be previewed directly in the browser. 
-                                        {['doc', 'docx'].includes(file.extension) && " (Office files require a public URL to view)"}
+                                        This file type ({file.extension}) cannot be previewed directly.
+                                        {['doc', 'docx', 'ppt', 'pptx'].includes(file.extension) && " (Office documents on localhost may require download)"}
                                     </p>
-                                    <a href={fileUrl} download className="px-6 py-2 bg-slate-900 text-white rounded-lg text-sm font-bold hover:bg-slate-800 transition-colors">
+                                    <a href={blobUrl} download={file.name} className="px-6 py-2 bg-slate-900 text-white rounded-lg text-sm font-bold hover:bg-slate-800 transition-colors">
                                         Download File
                                     </a>
                                 </div>
@@ -282,10 +330,6 @@ const FileViewerOverlay = ({ file, onClose }: { file: FileType; onClose: () => v
                         }
                     }}
                 />
-            ) : (
-                <div className="flex items-center justify-center h-full text-slate-400">
-                    File URL not found.
-                </div>
             )}
         </div>
       </motion.div>
@@ -880,7 +924,7 @@ export default function UserDashboard() {
       if (!activeChatLink) return null;
       return (
         <motion.div 
-            key="chat-overlay" // Added KEY
+            key="chat-overlay"
             initial={{ opacity: 0, y: 20, scale: 0.95 }}
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: 20, scale: 0.95 }}
@@ -954,7 +998,7 @@ export default function UserDashboard() {
     if (!viewingTextLink) return null;
     return (
         <motion.div 
-            key="text-viewer" // Added KEY
+            key="text-viewer"
             initial={{ opacity: 0 }} 
             animate={{ opacity: 1 }} 
             exit={{ opacity: 0 }} 
@@ -1050,7 +1094,7 @@ export default function UserDashboard() {
   // --- UPLOAD METADATA MODAL ---
   const renderUploadModal = () => (
     <motion.div 
-        key="upload-modal" // Added KEY
+        key="upload-modal"
         className="fixed inset-0 z-[250] bg-slate-900/70 backdrop-blur-sm flex items-center justify-center p-4"
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}
@@ -1124,7 +1168,7 @@ export default function UserDashboard() {
   // --- REPORT GENERATION MODAL ---
   const renderReportModal = () => (
       <motion.div 
-        key="report-modal" // Added KEY
+        key="report-modal"
         className="fixed inset-0 z-[250] bg-slate-900/70 backdrop-blur-sm flex items-center justify-center p-4"
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}
@@ -1193,7 +1237,7 @@ export default function UserDashboard() {
   // --- RENDER POPUP ---
   const renderWorkspacePopup = () => (
     <motion.div 
-        key="workspace-popup" // Added KEY
+        key="workspace-popup"
         className="fixed inset-0 z-[100] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-2"
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}
@@ -1622,7 +1666,6 @@ export default function UserDashboard() {
                     <tbody className="divide-y divide-slate-50">
                         {paginatedFiles.map((file, i) => {
                             const fileFolder = folders.find(f => String(f.id) === String(file.folderId));
-                            // UPDATED: Use same logic for download link
                             const fileUrl = file.publicPath 
                                 ? (file.publicPath.startsWith('http') 
                                     ? file.publicPath 
@@ -1646,7 +1689,6 @@ export default function UserDashboard() {
                                     </div>
                                 </td>
                                 <td className="px-4 py-2.5">
-                                    {/* MODIFIED: Show Icon instead of Badge */}
                                     {getFileIconByExtension(file.extension, "h-6 w-6")}
                                 </td>
                                 <td className="px-4 py-2.5 text-right w-36">
@@ -1779,7 +1821,7 @@ export default function UserDashboard() {
       {renderToast()}
 
       <AnimatePresence>
-        {viewingFile && <FileViewerOverlay file={viewingFile} onClose={() => setViewingFile(null)} />}
+        {viewingFile && <FileViewerOverlay key="file-viewer" file={viewingFile} onClose={() => setViewingFile(null)} />}
         {showWorkspace && renderWorkspacePopup()}
         {showUploadModal && renderUploadModal()}
         {showReportModal && renderReportModal()}

@@ -76,8 +76,8 @@ CHUNK_OVERLAP = int(os.getenv("CHUNK_OVERLAP", 100))
 
 # RAG & LLM Generation Configuration
 RETRIEVAL_K = int(os.getenv("RETRIEVAL_K", 4))
-LLM_TEMPERATURE = float(os.getenv("LLM_TEMPERATURE", 0.2))
-LLM_MAX_NEW_TOKENS = int(os.getenv("LLM_MAX_NEW_TOKENS", 1024)) # Increased for detailed reports
+LLM_TEMPERATURE = float(os.getenv("LLM_TEMPERATURE", 0.4))
+LLM_MAX_NEW_TOKENS = int(os.getenv("LLM_MAX_NEW_TOKENS", 512)) # Increased for detailed reports
 
 # Initialize Mongo Client
 client = MongoClient(MONGO_URL)
@@ -460,23 +460,13 @@ def generate_case_report(
         "final_report_text": report_text # Added for consistency with AgenticReportPipeline
     }
 
-#     # Render PDF/HTML
-#     return render_html_report(
-#         data=data,
-#         report_type=clean_report_type,
-#         user_id=str(user_id)
-#     )
-
-# async def generate_case_report_async(report_type: str, user_id: str, k: int = 4):
-#     loop = asyncio.get_running_loop()
-#     return await loop.run_in_executor(None, generate_case_report, report_type, user_id, k)
-
-# Pass the REPORTS_DIR explicitly
+    # Pass the REPORTS_DIR explicitly
+    # FIX: Removed 'folder_path' to match render_html_report signature
     saved_file_path = render_html_report(
         data=data,
         report_type=clean_report_type,
-        user_id=str(user_id),
-        folder_path=REPORTS_DIR
+        user_id=str(user_id)
+        # folder_path=REPORTS_DIR # <-- REMOVED TO FIX ERROR
     )
 
     # 5. Construct URL

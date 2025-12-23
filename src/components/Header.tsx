@@ -110,7 +110,7 @@ export const Header = ({
   const userMenuItems = [
     { title: "Dashboard", icon: LayoutDashboard, href: "/dashboard" },
     { title: "AI Search", icon: Sparkles, href: "/ai-search" }, 
-    { title: "History", icon: History, href: "/ai-history" },
+    // { title: "History", icon: History, href: "/ai-history" },
     // { title: "Tools", icon: Wrench, href: "/tools" }, // New Tools Item added here
     { title: "Reports", icon: FolderOpen, href: "/files" },
   ];

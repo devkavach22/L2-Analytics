@@ -1,5 +1,5 @@
 import express from "express";
-import { register, login, logout, getUserLinks } from "../controllers/authController.js";
+import { register, login, logout, getUserLinks, viewFile } from "../controllers/authController.js";
 import { auth } from "../middlewares/auth.js";
 import { authorize } from "../middlewares/roles.js";
 import Folder from "../models/Folder.js";
@@ -14,7 +14,7 @@ import axios from "axios";
 import Link from "../models/Link.js";
 import pkg from 'uuid';
 const { v4: uuidv4 } = pkg;
-import { viewFile } from "../controllers/authController.js";
+// import { viewFile } from "../controllers/authController.js";
 
 const router = express.Router();
 const LOCAL_STORAGE_PATH = process.env.LOCAL_STORAGE_PATH || "./uploads";
@@ -419,7 +419,7 @@ router.post("/chat/ask", auth, async (req, res) => {
     }
 });
 
-router.get("/file/view/:fileId", auth,viewFile);
+router.get("/file/view/:fileId", auth, viewFile);
 
 // History: Get past reports
 // router.get("/report/history", auth, getHistory);

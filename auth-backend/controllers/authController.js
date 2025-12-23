@@ -1,7 +1,11 @@
 import User from "../models/Users.js";
 import Link from "../models/Link.js";
+import File from "../models/File.js";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
+import path from "path";
+import fs from "fs";
+//
 import { sendEmail } from "../services/mailServices.js";
 // import { withSuccess } from "antd/es/modal/confirm.js";
 
@@ -107,38 +111,33 @@ export const getUserLinks = async (req, res) => {
 export const viewFile = async (req, res) => {
     try {
         const { fileId } = req.params;
-        
-        // Ensure req.user exists (Middleware should handle this, but safe check)
-        if (!req.user || !req.user.id) {
-            return res.status(401).json({ error: "Unauthorized access" });
-        }
-        
         const userId = req.user.id; 
 
-        // 1. Find file belonging to this user
+        // 1. Find file record in DB
         const file = await File.findOne({ _id: fileId, userId });
-        
         if (!file) {
-            return res.status(404).json({ error: "File not found or access denied" });
+            return res.status(404).json({ error: "File record not found" });
         }
 
-        // 2. Resolve path
-        // 'path' must be imported at the top of the file
-        const filePath = path.resolve(file.localPath);
+        // 2. Resolve absolute path (Fixes relative path issues)
+        let filePath = file.localPath;
+        if (!path.isAbsolute(filePath)) {
+            // If path is relative (e.g. "uploads/file.pdf"), resolve it against project root
+            filePath = path.resolve(process.cwd(), filePath);
+        }
 
-        // 3. Stream the file securely
-        // 'fs' must be imported at the top of the file
+        // 3. Check if file exists on disk
         if (fs.existsSync(filePath)) {
+            // ✅ SUCCESS: Stream the file
             res.setHeader('Content-Type', file.mimeType || 'application/octet-stream');
             res.sendFile(filePath);
         } else {
-            console.error(`File record exists but physical file missing at: ${filePath}`);
-            res.status(404).json({ error: "Physical file missing on server" });
+            // ❌ ERROR: File is missing on disk
+            console.error(`[ViewFile] Physical file missing at: ${filePath}`);
+            res.status(404).json({ error: "Physical file missing on server. Please delete and re-upload." });
         }
-
-    } catch (error) { 
-        // Fixed: Ensure the catch variable name matches the one used in console.error
-        console.error("View File Error:", error);
+    } catch (err) { 
+        console.error("View File Error:", err);
         res.status(500).json({ error: "Internal Server Error" });
     }
 };
