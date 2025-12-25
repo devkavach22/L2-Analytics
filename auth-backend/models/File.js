@@ -1,8 +1,10 @@
 import mongoose from "mongoose";
+import { type } from "os";
 
 const fileSchema = new mongoose.Schema({
   folderId: { type: mongoose.Schema.Types.ObjectId, ref: "Folder", required: true },
-  userId: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },
+  userId: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },  
+  url: { type: String, required: true },
 
   originalName: String,
   storedName: String,

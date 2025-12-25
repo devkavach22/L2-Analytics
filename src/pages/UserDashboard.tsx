@@ -15,7 +15,7 @@ import {
   ArrowLeft, Pencil, Loader2,
   Link as LinkIcon, Youtube, ExternalLink, Play,
   Info, FileInput, List, Languages, ScanText, User, Send, Bot, RefreshCw, Copy, Smartphone,
-  ShieldCheck, FileBarChart, PieChart
+  ShieldCheck, FileBarChart, PieChart, Layers
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -67,19 +67,20 @@ const REPORT_TYPES = [
     { id: 'Compliance Check', label: 'Compliance Check', icon: ShieldCheck, desc: 'Legal risks & PII detection', color: 'bg-emerald-50 text-emerald-600' },
 ];
 
-// --- COMPONENT: GLOW CARD ---
+// --- COMPONENT: GLOW CARD (UPDATED VISUALS) ---
 const GlowCard = ({ children, className = "", onClick, hoverEffect = true }: any) => {
   return (
     <motion.div
       onClick={onClick}
       variants={fadeInUp}
-      whileHover={hoverEffect ? { y: -2, boxShadow: "0 20px 40px -12px rgba(249, 115, 22, 0.1)" } : {}}
+      whileHover={hoverEffect ? { y: -4, boxShadow: "0 20px 40px -12px rgba(249, 115, 22, 0.15)" } : {}}
       className={cn(
-        "relative overflow-hidden rounded-2xl border border-white/60 bg-white/60 backdrop-blur-xl shadow-sm transition-all duration-300 group",
+        "relative overflow-hidden rounded-2xl border border-white/60 bg-gradient-to-br from-white/80 to-white/40 backdrop-blur-xl shadow-lg shadow-orange-500/5 transition-all duration-300 group",
         className
       )}
     >
-      <div className="absolute top-0 left-0 w-full h-[2px] bg-gradient-to-r from-transparent via-orange-400 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-500" />
+      <div className="absolute top-0 left-0 w-full h-[3px] bg-gradient-to-r from-transparent via-orange-400 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-500" />
+      <div className="absolute inset-0 bg-gradient-to-br from-orange-50/0 via-orange-50/0 to-orange-100/30 opacity-0 group-hover:opacity-100 transition-opacity duration-500 pointer-events-none" />
       {children}
     </motion.div>
   );
@@ -144,6 +145,7 @@ type LinkType = {
   extractedText?: string; // Original Text
   translatedText?: string; // Translated Text
   originalUrl?: string;
+  folderId?: string; // NEW: Added folderId to associate link with a folder
 };
 
 type ChatMessageType = {
@@ -180,7 +182,7 @@ const trendData = [
   { name: 'Sun', positive: 34, negative: 43, neutral: 21 },
 ];
 
-// --- COMPONENT: FILE VIEWER OVERLAY (UPDATED WITH SECURE BLOB FETCH) ---
+// --- COMPONENT: FILE VIEWER OVERLAY ---
 const FileViewerOverlay = ({ file, onClose }: { file: FileType; onClose: () => void }) => {
   const [blobUrl, setBlobUrl] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -195,18 +197,14 @@ const FileViewerOverlay = ({ file, onClose }: { file: FileType; onClose: () => v
         setError(false);
         const token = localStorage.getItem("token");
 
-        // 1. Fetch file as BLOB using the secure route
-        // This attaches the Authorization header automatically if using interceptors, 
-        // but we explicitly add it here as requested.
         const response = await Instance.get(`/auth/file/view/${file.id}`, {
           responseType: "blob",
           headers: {
-            'Authorization': token // Passing token in headers
+            'Authorization': token 
           }
         });
 
         if (isActive) {
-          // 2. Create a local URL for the blob
           const url = URL.createObjectURL(response.data);
           setBlobUrl(url);
         }
@@ -222,7 +220,6 @@ const FileViewerOverlay = ({ file, onClose }: { file: FileType; onClose: () => v
         fetchFile();
     }
 
-    // Cleanup blob URL on unmount
     return () => {
       isActive = false;
       if (blobUrl) {
@@ -231,7 +228,6 @@ const FileViewerOverlay = ({ file, onClose }: { file: FileType; onClose: () => v
     };
   }, [file.id]);
 
-  // Prepare documents array for React Doc Viewer
   const docs = blobUrl ? [
     { 
         uri: blobUrl, 
@@ -255,7 +251,6 @@ const FileViewerOverlay = ({ file, onClose }: { file: FileType; onClose: () => v
         className="w-full max-w-7xl h-[90vh] flex flex-col rounded-[24px] bg-white overflow-hidden shadow-2xl border border-white/20" 
         onClick={(e) => e.stopPropagation()}
       >
-        {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100 bg-white z-10 shrink-0">
           <div className="flex items-center gap-4">
              <div className="p-2 bg-orange-50 rounded-xl shadow-sm border border-orange-100 text-orange-500">
@@ -280,7 +275,6 @@ const FileViewerOverlay = ({ file, onClose }: { file: FileType; onClose: () => v
           </div>
         </div>
 
-        {/* Viewer Content */}
         <div className="flex-1 overflow-hidden relative bg-slate-100 w-full">
             {loading ? (
                 <div className="flex flex-col items-center justify-center h-full text-slate-400 gap-2">
@@ -404,6 +398,12 @@ export default function UserDashboard() {
   const [isTranslating, setIsTranslating] = useState(false);
   const [textViewerMode, setTextViewerMode] = useState<'original' | 'translated'>('original');
 
+  // New Link State (For Modal)
+  const [showLinkModal, setShowLinkModal] = useState(false);
+  const [targetFolderForLink, setTargetFolderForLink] = useState<FolderType | null>(null);
+  const [newLinkUrl, setNewLinkUrl] = useState("");
+  const [processingLinkId, setProcessingLinkId] = useState<string | null>(null);
+
   // Refs & Interactions
   const fileInputRef = useRef<HTMLInputElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
@@ -415,10 +415,6 @@ export default function UserDashboard() {
   const [newFolderDesc, setNewFolderDesc] = useState("");
   const [selectedFolder, setSelectedFolder] = useState<FolderType | null>(null);
   const [viewingFile, setViewingFile] = useState<FileType | null>(null);
-
-  // Link State
-  const [newLinkUrl, setNewLinkUrl] = useState("");
-  const [processingLinkId, setProcessingLinkId] = useState<string | null>(null);
 
   // Pagination
   const [currentPage, setCurrentPage] = useState(1);
@@ -439,10 +435,9 @@ export default function UserDashboard() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isUserLoaded, currentUser]);
 
-  // --- REPORT COMPLETION LISTENER (Updated) ---
+  // --- REPORT COMPLETION LISTENER ---
   useEffect(() => {
     const checkReportStatus = async () => {
-        // 1. Check LocalStorage (cross-tab)
         const notification = localStorage.getItem(NOTIFICATION_KEY);
         if (notification) {
             try {
@@ -452,12 +447,10 @@ export default function UserDashboard() {
             } catch (e) { localStorage.removeItem(NOTIFICATION_KEY); }
         }
     };
-
     const interval = setInterval(checkReportStatus, 3000); 
     return () => clearInterval(interval);
   }, []);
 
-  // Scroll to bottom of chat
   useEffect(() => {
     if (chatScrollRef.current) {
         chatScrollRef.current.scrollTop = chatScrollRef.current.scrollHeight;
@@ -466,7 +459,6 @@ export default function UserDashboard() {
 
   const showToast = (message: string, type: 'info' | 'success' | 'error' = 'info') => {
     setToast({ message, type });
-    // Auto hide success/error toasts after a few seconds
     setTimeout(() => setToast(null), 5000);
   };
 
@@ -484,7 +476,6 @@ export default function UserDashboard() {
         const rawFolders = foldersRes.data.folders || foldersRes.data || [];
         const themes = ["orange", "blue", "emerald", "purple"];
 
-        // 1. Map Folders
         const myFolders = rawFolders.map((f: any, i: number) => ({
              id: f._id || f.id, 
              name: f.name, 
@@ -497,25 +488,17 @@ export default function UserDashboard() {
         })).filter((f: any) => f.userId === uid);
         setFolders(myFolders);
 
-        // 2. Map Files
         const rawFiles = filesRes.data.files || filesRes.data || [];
         const myFiles = transformFiles(rawFiles, myFolders).filter((f: any) => f.userId === uid).reverse();
         setAllFiles(myFiles);
 
-        // 3. Map Links - FILTERED FOR COMPLETED AND UNIQUE
         const rawLinks = linksRes.data.links || linksRes.data || [];
         let myLinks = [];
         
         if (Array.isArray(rawLinks)) {
-            // Filter only completed links first
             const completedLinks = rawLinks.filter((l: any) => l.status === 'completed');
-            
-            // Remove duplicates (keep the latest one based on URL)
             const uniqueLinkMap = new Map();
-            completedLinks.forEach((l: any) => {
-                uniqueLinkMap.set(l.url, l);
-            });
-            
+            completedLinks.forEach((l: any) => uniqueLinkMap.set(l.url, l));
             const uniqueLinks = Array.from(uniqueLinkMap.values());
 
             myLinks = uniqueLinks.map((l: any) => ({
@@ -525,14 +508,14 @@ export default function UserDashboard() {
                 status: l.status || 'completed',
                 createdAt: l.createdAt,
                 ocrStatus: l.ocrStatus || 'pending', 
-                extractedText: l.extractedText || "Mock extracted text: This is content extracted from the URL...",
+                extractedText: l.extractedText || "Mock extracted text...",
                 translatedText: l.translatedText || "",
-                originalUrl: l.url
+                originalUrl: l.url,
+                folderId: l.folderId // Assuming backend returns folderId
             }));
         }
         setLinks(myLinks.reverse());
 
-        // 4. Update File Counts inside Folders
         const updatedFolders = myFolders.map((f: FolderType) => {
              const folderFiles = myFiles.filter((file: FileType) => String(file.folderId) === String(f.id));
              const totalSize = folderFiles.reduce((acc: number, file: FileType) => acc + (file.size || 0), 0);
@@ -540,7 +523,6 @@ export default function UserDashboard() {
         });
         setFolders(updatedFolders);
 
-        // 5. Stats
         const totalBytes = myFiles.reduce((acc: number, f: any) => acc + (f.size || 0), 0);
         let storage = totalBytes / (1024 * 1024);
         let unit = 'MB';
@@ -556,24 +538,16 @@ export default function UserDashboard() {
     } catch (e) { console.error("Fetch Data Error", e); }
   };
 
-  // --- TRANSFORM: Handles API Search Results Correctly ---
   const transformFiles = (rawFiles: any[], currentFolders: FolderType[] = folders) => {
       if (!Array.isArray(rawFiles)) return [];
-
       return rawFiles.map((f: any) => {
           let folderId = f.folderId || f.folder;
-          if (typeof folderId === 'object' && folderId !== null) {
-              folderId = folderId._id || folderId.id;
-          }
-
+          if (typeof folderId === 'object' && folderId !== null) folderId = folderId._id || folderId.id;
           if (!folderId && f.folderName) {
               let matchedFolder = currentFolders.find(fold => fold.name === f.folderName);
-              if (!matchedFolder) {
-                  matchedFolder = currentFolders.find(fold => fold.name.toLowerCase() === f.folderName.toLowerCase());
-              }
+              if (!matchedFolder) matchedFolder = currentFolders.find(fold => fold.name.toLowerCase() === f.folderName.toLowerCase());
               if (matchedFolder) folderId = matchedFolder.id;
           }
-
           return {
             id: f._id || f.id, 
             name: f.fileName || f.originalName || f.name || "Untitled", 
@@ -592,57 +566,42 @@ export default function UserDashboard() {
       if(!newFolderName.trim() || !currentUser) return;
       const uid = getUserId(currentUser);
       const creatorName = currentUser?.name || currentUser?.username || "Prachi Shah";
-
       try {
           await Instance.post(`/auth/folder/create`, { 
-            name: newFolderName, 
-            desc: newFolderDesc, 
-            userId: uid,
-            createdBy: creatorName 
+            name: newFolderName, desc: newFolderDesc, userId: uid, createdBy: creatorName 
           });
           setNewFolderName(""); setNewFolderDesc(""); fetchData();
           showToast("Folder created successfully!", "success");
       } catch(e) { console.error("Create Folder Error", e); }
   };
 
-  // --- TRIGGER UPLOAD MODAL ---
   const initiateUpload = (files: FileList) => {
     if(!files || files.length === 0) return;
     setPendingFiles(Array.from(files));
-    setMetaDocumentType("PDF"); 
-    setMetaRelatedTo("");
+    setMetaDocumentType("PDF"); setMetaRelatedTo("");
     setShowUploadModal(true);
   };
 
-  // --- CONFIRM UPLOAD TO API ---
   const handleConfirmUpload = async () => {
     if(pendingFiles.length === 0 || !currentUser) return;
-    
     setShowUploadModal(false); 
-    
     showToast("Uploading & Extracting Text (OCR)...", "info");
-
     const uid = getUserId(currentUser);
     const fd = new FormData();
     pendingFiles.forEach((f: any) => fd.append('files', f));
     fd.append('userId', uid);
-    
-    // Append Metadata
     fd.append('documentType', metaDocumentType);
     fd.append('relatedTo', metaRelatedTo);
-    
     const uploadUrl = selectedFolder ? `/auth/upload/${selectedFolder.id}` : `/auth/upload`; 
-    
     try {
         await Instance.post(uploadUrl, fd, { headers: { "Content-Type": "multipart/form-data" } });
         fetchData();
         showToast("Success! Files uploaded & processed.", "success");
     } catch(e: any) { 
         console.error("Upload Error", e);
-        const errorMessage = e.response?.data?.message || "Upload denied or failed. Please check file type/permissions.";
+        const errorMessage = e.response?.data?.message || "Upload denied or failed.";
         showToast(errorMessage, "error"); 
     }
-    
     setPendingFiles([]);
   };
 
@@ -655,64 +614,70 @@ export default function UserDashboard() {
       if(e.target.files && e.target.files.length > 0) initiateUpload(e.target.files);
   };
 
-  // --- REPORT GENERATION HANDLERS (API INTEGRATION) ---
   const handleInitiateReport = (type: 'folder' | 'file', id: string, name: string) => {
       setReportTarget({ type, id, name });
-      setSelectedReportType("Master Criminal Profile"); // Default
+      setSelectedReportType("Master Criminal Profile");
       setShowReportModal(true);
   };
 
   const handleGenerateReport = async () => {
       if(!reportTarget) return;
-      
-      const targetId = reportTarget.id;
-      const targetType = reportTarget.type;
+      const { id, type, name } = reportTarget;
       const reportType = selectedReportType;
-      const targetName = reportTarget.name;
-
       setShowReportModal(false);
-      showToast(`Generating ${reportType} for ${targetName}...`, "info");
-
+      showToast(`Generating ${reportType} for ${name}...`, "info");
       try {
-        const token = localStorage.getItem("token"); // Get token from local storage
-        
-        // Construct the payload
-        const payload = {
-            targetId: targetId,
-            targetType: targetType, 
-            reportType: reportType
-        };
-
-        // Call the API endpoint
-        await Instance.post('/auth/report/analyze', payload, {
-            headers: {
-                'Authorization': token ? token : '',
-                'Content-Type': 'application/json'
-            }
+        const token = localStorage.getItem("token");
+        await Instance.post('/auth/report/analyze', { targetId: id, targetType: type, reportType }, {
+            headers: { 'Authorization': token ? token : '', 'Content-Type': 'application/json' }
         });
-
-        showToast("Report generation started. Check back soon.", "success");
+        showToast("Report generation started.", "success");
         setReportTarget(null);
-
       } catch (error: any) {
         console.error("Report API Error:", error);
-        const errorMsg = error.response?.data?.message || "Failed to start report generation.";
-        showToast(errorMsg, "error");
+        showToast("Failed to start report generation.", "error");
       }
   };
 
   // --- LINK & CHAT LOGIC ---
-  const handleAddLink = async () => {
+  const handleConfirmAddLink = async () => {
     if(!newLinkUrl.trim()) return;
-    showToast("Adding link...", "info");
+    
+    // Check if folder is selected
+    if(!targetFolderForLink) {
+        showToast("No target folder selected.", "error");
+        return;
+    }
+
+    // --- UPDATED: GET USER ID & TOKEN ---
+    const uid = getUserId(currentUser);
+    const token = localStorage.getItem("token");
+
+    if (!uid) {
+        showToast("User session not found. Please refresh.", "error");
+        return;
+    }
+
+    setShowLinkModal(false);
+    showToast(`Adding link to ${targetFolderForLink.name}...`, "info");
+    
     try {
-        const res = await Instance.post('/auth/link/add', { url: newLinkUrl });
+        // --- UPDATED: PASS USER ID & AUTH HEADER ---
+        await Instance.post('/auth/link/add', { 
+            url: newLinkUrl, 
+            folderId: targetFolderForLink.id,
+            userId: uid // Pass userId
+        }, {
+            headers: { 'Authorization': token ? token : '' } // Pass Token explicitly
+        });
+        
         setNewLinkUrl("");
+        setTargetFolderForLink(null);
         fetchData(); 
         showToast("Link added successfully!", "success");
     } catch (e: any) {
         console.error("Add Link Error", e);
-        showToast("Failed to add link.", "error");
+        showToast("Failed to add link. Server returned error.", "error");
     }
   };
 
@@ -720,10 +685,8 @@ export default function UserDashboard() {
       if(processingLinkId) return;
       setProcessingLinkId(link.id);
       showToast("Running OCR extraction...", "info");
-
       try {
           await new Promise(r => setTimeout(r, 2000));
-          
           setLinks(prev => prev.map(l => l.id === link.id ? { ...l, ocrStatus: 'completed', extractedText: `Extracted content from ${l.url}...\nLorem ipsum dolor sit amet.` } : l));
           showToast("OCR Completed Successfully", "success");
       } catch (e) {
@@ -743,79 +706,42 @@ export default function UserDashboard() {
 
   const handleSendChatMessage = async () => {
     if(!chatInput.trim() || !activeChatLink) return;
-    
-    // 1. Add User Message
     const userMsg: ChatMessageType = { id: Date.now().toString(), role: 'user', content: chatInput, timestamp: new Date() };
     setChatMessages(prev => [...prev, userMsg]);
-    
     const currentQuestion = chatInput;
-    setChatInput(""); // Clear Input
-
-    // 2. Add Loading Indicator
+    setChatInput("");
     const loadingId = "loading-" + Date.now();
-    const loadingMsg: ChatMessageType = { 
-        id: loadingId, 
-        role: 'assistant', 
-        content: "Analyzing content...", 
-        timestamp: new Date(),
-        isLoading: true 
-    };
+    const loadingMsg: ChatMessageType = { id: loadingId, role: 'assistant', content: "Analyzing content...", timestamp: new Date(), isLoading: true };
     setChatMessages(prev => [...prev, loadingMsg]);
 
     try {
         const token = localStorage.getItem("token");
-        const payload = {
-            question: currentQuestion,
-            link: activeChatLink.url
-        };
-
-        const res = await Instance.post('/auth/chat/ask', payload, {
-            headers: {
-                'Authorization': token ? token : '',
-                'Content-Type': 'application/json'
-            }
+        const res = await Instance.post('/auth/chat/ask', { question: currentQuestion, link: activeChatLink.url }, {
+            headers: { 'Authorization': token ? token : '', 'Content-Type': 'application/json' }
         });
-
         const responseText = res.data.answer || res.data.message || (typeof res.data === 'string' ? res.data : "Here is the information from the video/link.");
-
-        setChatMessages(prev => prev.map(msg => 
-            msg.id === loadingId 
-            ? { ...msg, content: responseText, isLoading: false } 
-            : msg
-        ));
-
+        setChatMessages(prev => prev.map(msg => msg.id === loadingId ? { ...msg, content: responseText, isLoading: false } : msg));
     } catch (error: any) {
         console.error("Chat API Error:", error);
-        const errorMsg = error.response?.data?.message || "Sorry, I encountered an error communicating with the intelligence engine.";
-        
-        setChatMessages(prev => prev.map(msg => 
-            msg.id === loadingId 
-            ? { ...msg, content: errorMsg, isLoading: false } 
-            : msg
-        ));
+        setChatMessages(prev => prev.map(msg => msg.id === loadingId ? { ...msg, content: "Sorry, I encountered an error communicating with the intelligence engine.", isLoading: false } : msg));
     }
   };
 
-  // --- TRANSLATION LOGIC ---
   const handleOpenTextViewer = (link: LinkType) => {
       setViewingTextLink(link);
-      setTextViewerMode('original'); // Always reset to original when opening
+      setTextViewerMode('original');
   };
 
   const handleTranslateText = async () => {
       if(!viewingTextLink) return;
       setIsTranslating(true);
       showToast("Translating content...", "info");
-      
       try {
           await new Promise(r => setTimeout(r, 1500));
-          
           const translated = `(Translated to English)\n\n${viewingTextLink.extractedText}`;
-          
           const updatedLink = { ...viewingTextLink, translatedText: translated };
           setViewingTextLink(updatedLink);
           setLinks(prev => prev.map(l => l.id === updatedLink.id ? updatedLink : l));
-          
           setTextViewerMode('translated');
           showToast("Translation complete!", "success");
       } catch (e) {
@@ -835,36 +761,28 @@ export default function UserDashboard() {
   useEffect(() => {
     const delayDebounceFn = setTimeout(async () => {
         const activeTerm = activeWorkspaceTab === "folders" && !selectedFolder ? folderSearchTerm : fileSearchTerm;
-
         if(!activeTerm || !activeTerm.trim()) {
             setIsSearching(false);
             setSearchResults([]);
             return;
         }
-
         setIsSearching(true);
         try {
             const res = await Instance.get(`/search?q=${encodeURIComponent(activeTerm)}`);
             let resultsRaw = [];
-            if (Array.isArray(res.data)) {
-                resultsRaw = res.data;
-            } else if (res.data && Array.isArray(res.data.results)) {
-                resultsRaw = res.data.results;
-            } else if (res.data && Array.isArray(res.data.files)) {
-                resultsRaw = res.data.files;
-            }
+            if (Array.isArray(res.data)) resultsRaw = res.data;
+            else if (res.data && Array.isArray(res.data.results)) resultsRaw = res.data.results;
+            else if (res.data && Array.isArray(res.data.files)) resultsRaw = res.data.files;
             setSearchResults(transformFiles(resultsRaw, folders));
         } catch (e) {
             console.error("Search Error:", e);
             setSearchResults([]);
         }
-        
     }, 500); 
-
     return () => clearTimeout(delayDebounceFn);
   }, [fileSearchTerm, folderSearchTerm, activeWorkspaceTab, selectedFolder, folders]);
 
-  // --- DISPLAY LOGIC (STRICT) ---
+  // --- DISPLAY LOGIC ---
   const getDisplayFolders = () => {
       if (!folderSearchTerm.trim()) return folders;
       const lowerTerm = folderSearchTerm.toLowerCase();
@@ -895,20 +813,15 @@ export default function UserDashboard() {
         <motion.div
           key="toast-notification"
           variants={toastVariant}
-          initial="hidden"
-          animate="visible"
-          exit="exit"
+          initial="hidden" animate="visible" exit="exit"
           className={cn(
             "fixed bottom-8 right-8 z-[200] flex items-center gap-3 px-6 py-4 rounded-xl shadow-2xl backdrop-blur-xl border border-white/20 min-w-[320px]",
             toast.type === 'success' ? "bg-emerald-500/90 text-white" :
-            toast.type === 'error' ? "bg-rose-500/90 text-white" :
-            "bg-slate-900/90 text-white"
+            toast.type === 'error' ? "bg-rose-500/90 text-white" : "bg-slate-900/90 text-white"
           )}
         >
            <div className="p-2 bg-white/20 rounded-full">
-              {toast.type === 'success' ? <CheckCircle2 className="h-5 w-5" /> :
-               toast.type === 'error' ? <AlertCircle className="h-5 w-5" /> :
-               <Loader2 className="h-5 w-5 animate-spin" />}
+              {toast.type === 'success' ? <CheckCircle2 className="h-5 w-5" /> : toast.type === 'error' ? <AlertCircle className="h-5 w-5" /> : <Loader2 className="h-5 w-5 animate-spin" />}
            </div>
            <div>
               <p className="font-bold text-sm">{toast.type === 'success' ? "Success" : toast.type === 'error' ? "Error" : "Processing"}</p>
@@ -930,64 +843,33 @@ export default function UserDashboard() {
             exit={{ opacity: 0, y: 20, scale: 0.95 }}
             className="fixed bottom-4 right-4 w-[350px] md:w-[400px] h-[550px] bg-white rounded-2xl shadow-2xl border border-slate-200 z-[200] flex flex-col overflow-hidden"
         >
-            {/* Chat Header */}
             <div className="bg-white p-4 border-b border-slate-100 flex justify-between items-center shrink-0 shadow-sm z-10">
                 <div className="flex items-center gap-3">
-                    <div className="h-10 w-10 bg-orange-100 rounded-full flex items-center justify-center text-orange-600 border border-orange-200">
-                        <Bot className="h-6 w-6" />
-                    </div>
+                    <div className="h-10 w-10 bg-orange-100 rounded-full flex items-center justify-center text-orange-600 border border-orange-200"><Bot className="h-6 w-6" /></div>
                     <div>
                         <h3 className="text-slate-800 font-bold text-sm">AI Assistant</h3>
-                        <p className="text-slate-400 text-[10px] truncate max-w-[200px] flex items-center gap-1">
-                            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" /> Online
-                        </p>
+                        <p className="text-slate-400 text-[10px] truncate max-w-[200px] flex items-center gap-1"><span className="w-1.5 h-1.5 rounded-full bg-emerald-500" /> Online</p>
                     </div>
                 </div>
-                <Button variant="ghost" size="icon" className="text-slate-400 hover:text-slate-600 hover:bg-slate-50 rounded-full h-8 w-8" onClick={() => setActiveChatLink(null)}>
-                    <X className="h-5 w-5" />
-                </Button>
+                <Button variant="ghost" size="icon" className="text-slate-400 hover:text-slate-600 hover:bg-slate-50 rounded-full h-8 w-8" onClick={() => setActiveChatLink(null)}><X className="h-5 w-5" /></Button>
             </div>
-            
-            {/* Chat Messages Area */}
             <div className="flex-1 overflow-y-auto p-4 space-y-4 bg-slate-50" ref={chatScrollRef}>
                 <div className="text-center text-[10px] text-slate-400 my-4 uppercase tracking-widest font-bold">Today</div>
-                {chatMessages.map((msg, index) => (
-                    <motion.div 
-                        initial={{ opacity: 0, y: 10 }}
-                        animate={{ opacity: 1, y: 0 }}
-                        key={msg.id} 
-                        className={cn("flex w-full", msg.role === 'user' ? "justify-end" : "justify-start")}
-                    >
+                {chatMessages.map((msg) => (
+                    <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} key={msg.id} className={cn("flex w-full", msg.role === 'user' ? "justify-end" : "justify-start")}>
                         <div className={cn("flex flex-col gap-1 max-w-[85%]", msg.role === 'user' ? "items-end" : "items-start")}>
-                             <div className={cn(
-                                "p-3.5 rounded-2xl text-xs leading-relaxed shadow-sm relative",
-                                msg.role === 'user' ? "bg-orange-500 text-white rounded-br-none" : "bg-white text-slate-700 border border-slate-200 rounded-bl-none"
-                            )}>
-                                {msg.isLoading ? (
-                                    <div className="flex items-center gap-2">
-                                        <Loader2 className="h-3 w-3 animate-spin" /> {msg.content}
-                                    </div>
-                                ) : msg.content}
+                             <div className={cn("p-3.5 rounded-2xl text-xs leading-relaxed shadow-sm relative", msg.role === 'user' ? "bg-orange-500 text-white rounded-br-none" : "bg-white text-slate-700 border border-slate-200 rounded-bl-none")}>
+                                {msg.isLoading ? <div className="flex items-center gap-2"><Loader2 className="h-3 w-3 animate-spin" /> {msg.content}</div> : msg.content}
                             </div>
                             <span className="text-[9px] text-slate-400 px-1">{msg.timestamp.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</span>
                         </div>
                     </motion.div>
                 ))}
             </div>
-
-            {/* Input Area */}
             <div className="p-3 bg-white border-t border-slate-100 shrink-0">
                 <form onSubmit={(e) => { e.preventDefault(); handleSendChatMessage(); }} className="flex gap-2 items-center">
-                    <Input 
-                        value={chatInput} 
-                        onChange={(e) => setChatInput(e.target.value)} 
-                        placeholder="Type your message..." 
-                        className="rounded-full bg-slate-50 border-slate-200 text-xs focus-visible:ring-orange-400 py-5 pl-4"
-                        autoFocus
-                    />
-                    <Button type="submit" size="icon" disabled={!chatInput.trim()} className="rounded-full bg-slate-900 hover:bg-slate-800 text-white w-10 h-10 shrink-0 shadow-lg shadow-slate-900/20 disabled:opacity-50 disabled:cursor-not-allowed transition-all">
-                        <Send className="h-4 w-4 ml-0.5" />
-                    </Button>
+                    <Input value={chatInput} onChange={(e) => setChatInput(e.target.value)} placeholder="Type your message..." className="rounded-full bg-slate-50 border-slate-200 text-xs focus-visible:ring-orange-400 py-5 pl-4" autoFocus />
+                    <Button type="submit" size="icon" disabled={!chatInput.trim()} className="rounded-full bg-slate-900 hover:bg-slate-800 text-white w-10 h-10 shrink-0 shadow-lg shadow-slate-900/20 disabled:opacity-50 disabled:cursor-not-allowed transition-all"><Send className="h-4 w-4 ml-0.5" /></Button>
                 </form>
             </div>
         </motion.div>
@@ -999,91 +881,43 @@ export default function UserDashboard() {
     return (
         <motion.div 
             key="text-viewer"
-            initial={{ opacity: 0 }} 
-            animate={{ opacity: 1 }} 
-            exit={{ opacity: 0 }} 
+            initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} 
             className="fixed inset-0 z-[250] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-6"
             onClick={() => setViewingTextLink(null)}
         >
             <motion.div 
-                initial={{ scale: 0.95, y: 20 }} 
-                animate={{ scale: 1, y: 0 }} 
+                initial={{ scale: 0.95, y: 20 }} animate={{ scale: 1, y: 0 }} 
                 className="w-full max-w-4xl h-[85vh] bg-white rounded-2xl shadow-2xl overflow-hidden flex flex-col"
                 onClick={(e) => e.stopPropagation()}
             >
-                {/* Header */}
                 <div className="px-6 py-4 border-b border-slate-100 flex justify-between items-center bg-white shrink-0">
                     <div className="flex items-center gap-3">
                         <div className="p-2.5 bg-orange-50 rounded-xl text-orange-500 border border-orange-100"><ScanText className="h-5 w-5" /></div>
                         <div>
                             <h3 className="font-bold text-slate-800 text-sm">Extracted Content Viewer</h3>
-                            <p className="text-xs text-slate-500 truncate max-w-md mt-0.5 flex items-center gap-1">
-                                <LinkIcon className="h-3 w-3" /> {viewingTextLink.url}
-                            </p>
+                            <p className="text-xs text-slate-500 truncate max-w-md mt-0.5 flex items-center gap-1"><LinkIcon className="h-3 w-3" /> {viewingTextLink.url}</p>
                         </div>
                     </div>
                     <div className="flex items-center gap-2">
-                        <Button 
-                            variant="outline" size="sm" 
-                            onClick={handleTranslateText}
-                            disabled={isTranslating || textViewerMode === 'translated'}
-                            className={cn(
-                                "text-xs font-bold border-slate-200 rounded-lg h-9 px-4 transition-all",
-                                textViewerMode === 'translated' ? "bg-purple-50 text-purple-600 border-purple-200 cursor-default" : "text-slate-600 hover:bg-purple-50 hover:text-purple-600 hover:border-purple-200"
-                            )}
-                        >
+                        <Button variant="outline" size="sm" onClick={handleTranslateText} disabled={isTranslating || textViewerMode === 'translated'} className={cn("text-xs font-bold border-slate-200 rounded-lg h-9 px-4 transition-all", textViewerMode === 'translated' ? "bg-purple-50 text-purple-600 border-purple-200 cursor-default" : "text-slate-600 hover:bg-purple-50 hover:text-purple-600 hover:border-purple-200")}>
                             {isTranslating ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-2" /> : <Languages className="h-3.5 w-3.5 mr-2" />}
                             {isTranslating ? "Translating..." : textViewerMode === 'translated' ? "Translated" : "Translate to English"}
                         </Button>
                         <Button variant="ghost" size="icon" onClick={() => setViewingTextLink(null)} className="rounded-full hover:bg-slate-100"><X className="h-5 w-5 text-slate-400" /></Button>
                     </div>
                 </div>
-
-                {/* Tabs */}
                 <div className="px-6 border-b border-slate-100 bg-slate-50/50 flex gap-6">
-                    <button 
-                        onClick={() => setTextViewerMode('original')}
-                        className={cn(
-                            "text-xs font-bold py-3 border-b-2 transition-all flex items-center gap-2",
-                            textViewerMode === 'original' ? "border-orange-500 text-orange-600" : "border-transparent text-slate-400 hover:text-slate-600"
-                        )}
-                    >
-                        Original Extracted Text
-                    </button>
-                    <button 
-                        onClick={() => viewingTextLink.translatedText && setTextViewerMode('translated')}
-                        disabled={!viewingTextLink.translatedText}
-                        className={cn(
-                            "text-xs font-bold py-3 border-b-2 transition-all flex items-center gap-2",
-                            textViewerMode === 'translated' ? "border-purple-500 text-purple-600" : !viewingTextLink.translatedText ? "border-transparent text-slate-300 cursor-not-allowed" : "border-transparent text-slate-400 hover:text-purple-600"
-                        )}
-                    >
-                        Translated Text {textViewerMode === 'translated' && <CheckCircle2 className="h-3 w-3" />}
-                    </button>
+                    <button onClick={() => setTextViewerMode('original')} className={cn("text-xs font-bold py-3 border-b-2 transition-all flex items-center gap-2", textViewerMode === 'original' ? "border-orange-500 text-orange-600" : "border-transparent text-slate-400 hover:text-slate-600")}>Original Extracted Text</button>
+                    <button onClick={() => viewingTextLink.translatedText && setTextViewerMode('translated')} disabled={!viewingTextLink.translatedText} className={cn("text-xs font-bold py-3 border-b-2 transition-all flex items-center gap-2", textViewerMode === 'translated' ? "border-purple-500 text-purple-600" : !viewingTextLink.translatedText ? "border-transparent text-slate-300 cursor-not-allowed" : "border-transparent text-slate-400 hover:text-purple-600")}>Translated Text {textViewerMode === 'translated' && <CheckCircle2 className="h-3 w-3" />}</button>
                 </div>
-
-                {/* Content Area */}
                 <div className="flex-1 overflow-y-auto p-8 bg-slate-50 relative">
                     <div className="absolute top-4 right-4 z-10">
-                         <Button 
-                            variant="outline" size="sm" 
-                            onClick={() => handleCopyText(textViewerMode === 'original' ? viewingTextLink.extractedText || "" : viewingTextLink.translatedText || "")}
-                            className="bg-white/80 backdrop-blur border-slate-200 text-slate-500 hover:text-slate-800 text-xs h-8"
-                         >
-                            <Copy className="h-3 w-3 mr-1.5" /> Copy
-                         </Button>
+                         <Button variant="outline" size="sm" onClick={() => handleCopyText(textViewerMode === 'original' ? viewingTextLink.extractedText || "" : viewingTextLink.translatedText || "")} className="bg-white/80 backdrop-blur border-slate-200 text-slate-500 hover:text-slate-800 text-xs h-8"><Copy className="h-3 w-3 mr-1.5" /> Copy</Button>
                     </div>
-
                     <div className="bg-white p-8 rounded-xl border border-slate-200 shadow-sm min-h-full">
-                        {textViewerMode === 'original' ? (
-                            <div className="prose prose-sm max-w-none text-slate-700 font-mono leading-relaxed whitespace-pre-wrap">
-                                {viewingTextLink.extractedText || <span className="text-slate-400 italic">No content extracted yet. Run OCR first.</span>}
-                            </div>
-                        ) : (
-                            <div className="prose prose-sm max-w-none text-purple-900 font-mono leading-relaxed whitespace-pre-wrap">
-                                {viewingTextLink.translatedText}
-                            </div>
-                        )}
+                        <div className="prose prose-sm max-w-none text-slate-700 font-mono leading-relaxed whitespace-pre-wrap">
+                            {textViewerMode === 'original' ? (viewingTextLink.extractedText || <span className="text-slate-400 italic">No content extracted yet. Run OCR first.</span>) : viewingTextLink.translatedText}
+                        </div>
                     </div>
                 </div>
             </motion.div>
@@ -1091,212 +925,139 @@ export default function UserDashboard() {
     );
   };
 
-  // --- UPLOAD METADATA MODAL ---
   const renderUploadModal = () => (
     <motion.div 
         key="upload-modal"
         className="fixed inset-0 z-[250] bg-slate-900/70 backdrop-blur-sm flex items-center justify-center p-4"
-        initial={{ opacity: 0 }}
-        animate={{ opacity: 1 }}
-        exit={{ opacity: 0 }}
+        initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
     >
-        <motion.div 
-            initial={{ scale: 0.95, y: 10 }} 
-            animate={{ scale: 1, y: 0 }} 
-            className="bg-white w-full max-w-md rounded-2xl p-6 shadow-2xl border border-white/20"
-        >
+        <motion.div initial={{ scale: 0.95, y: 10 }} animate={{ scale: 1, y: 0 }} className="bg-white w-full max-w-md rounded-2xl p-6 shadow-2xl border border-white/20">
             <div className="flex justify-between items-center mb-6">
-                <h3 className="text-lg font-bold text-slate-800 flex items-center gap-2">
-                    <UploadCloud className="h-5 w-5 text-orange-500" /> Confirm Upload
-                </h3>
-                <Button variant="ghost" size="icon" onClick={() => { setShowUploadModal(false); setPendingFiles([]); }}>
-                    <X className="h-4 w-4 text-slate-400" />
-                </Button>
+                <h3 className="text-lg font-bold text-slate-800 flex items-center gap-2"><UploadCloud className="h-5 w-5 text-orange-500" /> Confirm Upload</h3>
+                <Button variant="ghost" size="icon" onClick={() => { setShowUploadModal(false); setPendingFiles([]); }}><X className="h-4 w-4 text-slate-400" /></Button>
             </div>
-            
             <div className="mb-6">
                 <p className="text-sm font-medium text-slate-600 mb-2">Files to upload:</p>
                 <div className="bg-slate-50 rounded-xl p-3 max-h-32 overflow-y-auto border border-slate-100">
-                    {pendingFiles.map((f, i) => (
-                        <div key={i} className="flex items-center gap-2 text-xs text-slate-500 py-1">
-                            <FileIcon className="h-3 w-3" /> <span className="truncate">{f.name}</span>
-                        </div>
-                    ))}
+                    {pendingFiles.map((f, i) => (<div key={i} className="flex items-center gap-2 text-xs text-slate-500 py-1"><FileIcon className="h-3 w-3" /> <span className="truncate">{f.name}</span></div>))}
                 </div>
             </div>
-
             <div className="space-y-4 mb-8">
                 <div>
                     <label className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-1.5 block">Document Type</label>
-                    <Input 
-                        value={metaDocumentType} 
-                        onChange={(e) => setMetaDocumentType(e.target.value)} 
-                        placeholder="e.g. PDF, Invoice, Resume" 
-                        className="rounded-xl border-orange-100"
-                    />
+                    <Input value={metaDocumentType} onChange={(e) => setMetaDocumentType(e.target.value)} placeholder="e.g. PDF, Invoice, Resume" className="rounded-xl border-orange-100"/>
                 </div>
                 <div>
                     <label className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-1.5 block">Related To</label>
-                    <Input 
-                        value={metaRelatedTo} 
-                        onChange={(e) => setMetaRelatedTo(e.target.value)} 
-                        placeholder="e.g. Resume, HR, Project ID" 
-                        className="rounded-xl border-orange-100"
-                    />
+                    <Input value={metaRelatedTo} onChange={(e) => setMetaRelatedTo(e.target.value)} placeholder="e.g. Resume, HR, Project ID" className="rounded-xl border-orange-100"/>
                 </div>
             </div>
-
             <div className="flex gap-3">
-                <Button 
-                    variant="outline" 
-                    className="flex-1 rounded-xl" 
-                    onClick={() => { setShowUploadModal(false); setPendingFiles([]); }}
-                >
-                    Cancel
-                </Button>
-                <Button 
-                    className="flex-1 bg-orange-500 hover:bg-orange-600 text-white rounded-xl font-bold"
-                    onClick={handleConfirmUpload}
-                >
-                    Confirm & Upload
-                </Button>
+                <Button variant="outline" className="flex-1 rounded-xl" onClick={() => { setShowUploadModal(false); setPendingFiles([]); }}>Cancel</Button>
+                <Button className="flex-1 bg-orange-500 hover:bg-orange-600 text-white rounded-xl font-bold" onClick={handleConfirmUpload}>Confirm & Upload</Button>
             </div>
         </motion.div>
     </motion.div>
   );
 
-  // --- REPORT GENERATION MODAL ---
+  // --- NEW ADD LINK MODAL ---
+  const renderLinkModal = () => (
+    <motion.div 
+        key="link-modal"
+        className="fixed inset-0 z-[250] bg-slate-900/70 backdrop-blur-sm flex items-center justify-center p-4"
+        initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+    >
+        <motion.div initial={{ scale: 0.95, y: 10 }} animate={{ scale: 1, y: 0 }} className="bg-white w-full max-w-md rounded-2xl p-6 shadow-2xl border border-white/20">
+            <div className="flex justify-between items-center mb-6">
+                <h3 className="text-lg font-bold text-slate-800 flex items-center gap-2"><Youtube className="h-5 w-5 text-red-500" /> Add Link to Folder</h3>
+                <Button variant="ghost" size="icon" onClick={() => { setShowLinkModal(false); setTargetFolderForLink(null); setNewLinkUrl(""); }}><X className="h-4 w-4 text-slate-400" /></Button>
+            </div>
+            
+            <div className="bg-orange-50/50 p-4 rounded-xl border border-orange-100 mb-6 flex items-center gap-3">
+                <div className="h-10 w-10 bg-white rounded-lg flex items-center justify-center text-orange-500 shadow-sm border border-orange-50"><Folder className="h-5 w-5" /></div>
+                <div>
+                    <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Target Folder</p>
+                    <p className="text-sm font-bold text-slate-800">{targetFolderForLink?.name}</p>
+                </div>
+            </div>
+
+            <div className="mb-8">
+                <label className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-1.5 block">Paste URL</label>
+                <Input 
+                    value={newLinkUrl} 
+                    onChange={(e) => setNewLinkUrl(e.target.value)} 
+                    placeholder="e.g. https://www.youtube.com/watch?v=..." 
+                    className="rounded-xl border-orange-100 bg-white h-11"
+                    autoFocus
+                />
+                <p className="text-[10px] text-slate-400 mt-2 flex items-center gap-1"><Info className="h-3 w-3" /> Supports YouTube, Vimeo, and direct article links.</p>
+            </div>
+
+            <div className="flex gap-3">
+                <Button variant="outline" className="flex-1 rounded-xl" onClick={() => { setShowLinkModal(false); setTargetFolderForLink(null); setNewLinkUrl(""); }}>Cancel</Button>
+                <Button className="flex-1 bg-slate-900 hover:bg-slate-800 text-white rounded-xl font-bold" onClick={handleConfirmAddLink} disabled={!newLinkUrl.trim()}>Add Link</Button>
+            </div>
+        </motion.div>
+    </motion.div>
+  );
+
   const renderReportModal = () => (
       <motion.div 
         key="report-modal"
         className="fixed inset-0 z-[250] bg-slate-900/70 backdrop-blur-sm flex items-center justify-center p-4"
-        initial={{ opacity: 0 }}
-        animate={{ opacity: 1 }}
-        exit={{ opacity: 0 }}
+        initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
     >
-        <motion.div 
-            initial={{ scale: 0.95, y: 10 }} 
-            animate={{ scale: 1, y: 0 }} 
-            className="bg-white w-full max-w-lg rounded-2xl p-0 shadow-2xl border border-white/20 overflow-hidden"
-        >
+        <motion.div initial={{ scale: 0.95, y: 10 }} animate={{ scale: 1, y: 0 }} className="bg-white w-full max-w-lg rounded-2xl p-0 shadow-2xl border border-white/20 overflow-hidden">
             <div className="bg-gradient-to-r from-orange-50 to-white p-6 border-b border-orange-100 flex justify-between items-center">
                  <div>
-                    <h3 className="text-lg font-black text-slate-800 flex items-center gap-2">
-                        <Sparkles className="h-5 w-5 text-orange-500 fill-orange-500" /> Generate Intelligence Report
-                    </h3>
-                    <p className="text-xs text-slate-500 mt-1">
-                        Analyzing: <span className="font-bold text-slate-700">{reportTarget?.name}</span>
-                    </p>
+                    <h3 className="text-lg font-black text-slate-800 flex items-center gap-2"><Sparkles className="h-5 w-5 text-orange-500 fill-orange-500" /> Generate Intelligence Report</h3>
+                    <p className="text-xs text-slate-500 mt-1">Analyzing: <span className="font-bold text-slate-700">{reportTarget?.name}</span></p>
                  </div>
                  <Button variant="ghost" size="icon" onClick={() => setShowReportModal(false)} className="rounded-full"><X className="h-5 w-5 text-slate-400" /></Button>
             </div>
-
             <div className="p-6">
                 <p className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-4">Select Report Type</p>
                 <div className="grid grid-cols-1 gap-3">
-                    {REPORT_TYPES.map((type) => {
-                        const Icon = type.icon;
-                        const isSelected = selectedReportType === type.id;
-                        return (
-                            <div 
-                                key={type.id}
-                                onClick={() => setSelectedReportType(type.id)}
-                                className={cn(
-                                    "relative p-4 rounded-xl border-2 transition-all cursor-pointer flex items-center gap-4 group",
-                                    isSelected ? "border-orange-500 bg-orange-50/50" : "border-slate-100 hover:border-orange-200 hover:bg-slate-50"
-                                )}
-                            >
-                                <div className={cn("p-3 rounded-xl transition-colors", type.color, isSelected ? "bg-white shadow-sm" : "bg-white")}>
-                                    <Icon className="h-6 w-6" />
-                                </div>
-                                <div>
-                                    <h4 className={cn("font-bold text-sm", isSelected ? "text-slate-900" : "text-slate-700")}>{type.label}</h4>
-                                    <p className="text-xs text-slate-500">{type.desc}</p>
-                                </div>
-                                {isSelected && (
-                                    <div className="absolute right-4 top-1/2 -translate-y-1/2">
-                                        <CheckCircle2 className="h-5 w-5 text-orange-500 fill-orange-100" />
-                                    </div>
-                                )}
-                            </div>
-                        )
-                    })}
+                    {REPORT_TYPES.map((type) => (
+                        <div key={type.id} onClick={() => setSelectedReportType(type.id)} className={cn("relative p-4 rounded-xl border-2 transition-all cursor-pointer flex items-center gap-4 group", selectedReportType === type.id ? "border-orange-500 bg-orange-50/50" : "border-slate-100 hover:border-orange-200 hover:bg-slate-50")}>
+                            <div className={cn("p-3 rounded-xl transition-colors", type.color, selectedReportType === type.id ? "bg-white shadow-sm" : "bg-white")}><type.icon className="h-6 w-6" /></div>
+                            <div><h4 className={cn("font-bold text-sm", selectedReportType === type.id ? "text-slate-900" : "text-slate-700")}>{type.label}</h4><p className="text-xs text-slate-500">{type.desc}</p></div>
+                            {selectedReportType === type.id && (<div className="absolute right-4 top-1/2 -translate-y-1/2"><CheckCircle2 className="h-5 w-5 text-orange-500 fill-orange-100" /></div>)}
+                        </div>
+                    ))}
                 </div>
             </div>
-
             <div className="p-6 pt-2 bg-slate-50 flex gap-3">
                 <Button variant="outline" className="flex-1 rounded-xl border-slate-200" onClick={() => setShowReportModal(false)}>Cancel</Button>
-                <Button onClick={handleGenerateReport} className="flex-1 bg-slate-900 hover:bg-slate-800 text-white rounded-xl font-bold shadow-lg shadow-slate-900/10">
-                    <Sparkles className="h-4 w-4 mr-2" /> Generate Report
-                </Button>
+                <Button onClick={handleGenerateReport} className="flex-1 bg-slate-900 hover:bg-slate-800 text-white rounded-xl font-bold shadow-lg shadow-slate-900/10"><Sparkles className="h-4 w-4 mr-2" /> Generate Report</Button>
             </div>
         </motion.div>
     </motion.div>
   );
 
-  // --- RENDER POPUP ---
   const renderWorkspacePopup = () => (
     <motion.div 
         key="workspace-popup"
         className="fixed inset-0 z-[100] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-2"
-        initial={{ opacity: 0 }}
-        animate={{ opacity: 1 }}
-        exit={{ opacity: 0 }}
+        initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
         onClick={() => setShowWorkspace(false)}
     >
-       <motion.div 
-          variants={modalTransition}
-          initial="hidden"
-          animate="visible"
-          exit="exit"
-          onClick={(e) => { e.stopPropagation(); setActiveFolderMenu(null); }}
-          className="bg-slate-900 w-full max-w-[96vw] h-[92vh] rounded-[24px] overflow-hidden flex shadow-2xl relative border border-slate-700/50"
-       >
-          {/* SIDEBAR */}
+       <motion.div variants={modalTransition} initial="hidden" animate="visible" exit="exit" onClick={(e) => { e.stopPropagation(); setActiveFolderMenu(null); }} className="bg-slate-900 w-full max-w-[96vw] h-[92vh] rounded-[24px] overflow-hidden flex shadow-2xl relative border border-slate-700/50">
           <div className="w-64 bg-[#0F172A] flex flex-col flex-shrink-0 border-r border-slate-800">
              <div className="p-6 pb-4">
-                <div className="flex items-center gap-2 text-orange-500 mb-6">
-                    <LayoutGrid className="h-6 w-6" />
-                    <h2 className="text-xl font-bold tracking-wide text-white">Workspace</h2>
-                </div>
+                <div className="flex items-center gap-2 text-orange-500 mb-6"><LayoutGrid className="h-6 w-6" /><h2 className="text-xl font-bold tracking-wide text-white">Workspace</h2></div>
                 <div className="mb-4">
                     <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-2">LOGGED IN AS</p>
-                    <div className="flex items-center gap-3">
-                        <div className="h-9 w-9 rounded-full bg-orange-500 flex items-center justify-center text-white font-bold text-sm">
-                            {displayName.charAt(0).toUpperCase()}
-                        </div>
-                        <p className="text-white font-medium text-sm truncate">{displayName}</p>
-                    </div>
+                    <div className="flex items-center gap-3"><div className="h-9 w-9 rounded-full bg-orange-500 flex items-center justify-center text-white font-bold text-sm">{displayName.charAt(0).toUpperCase()}</div><p className="text-white font-medium text-sm truncate">{displayName}</p></div>
                 </div>
              </div>
              <div className="flex-1 px-3 space-y-1">
-                 <button 
-                    onClick={() => { setActiveWorkspaceTab("folders"); setSelectedFolder(null); setFileSearchTerm(""); setFolderSearchTerm(""); setSearchResults([]); }}
-                    className={cn("w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-bold transition-all text-left", activeWorkspaceTab === 'folders' ? "bg-orange-500 text-white shadow-lg shadow-orange-500/20" : "text-slate-400 hover:text-white hover:bg-slate-800")}
-                 >
-                     <FolderOpen className="h-5 w-5" /> My Folders
-                 </button>
-                 <button 
-                    onClick={() => { setActiveWorkspaceTab("files"); setSelectedFolder(null); setFileSearchTerm(""); setFolderSearchTerm(""); setSearchResults([]); }}
-                    className={cn("w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-bold transition-all text-left", activeWorkspaceTab === 'files' ? "bg-orange-500 text-white shadow-lg shadow-orange-500/20" : "text-slate-400 hover:text-white hover:bg-slate-800")}
-                 >
-                     <FileText className="h-5 w-5" /> My Files
-                 </button>
-                 <button 
-                    onClick={() => { setActiveWorkspaceTab("links"); setSelectedFolder(null); }}
-                    className={cn("w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-bold transition-all text-left", activeWorkspaceTab === 'links' ? "bg-orange-500 text-white shadow-lg shadow-orange-500/20" : "text-slate-400 hover:text-white hover:bg-slate-800")}
-                 >
-                     <LinkIcon className="h-5 w-5" /> Links
-                 </button>
+                 <button onClick={() => { setActiveWorkspaceTab("folders"); setSelectedFolder(null); setFileSearchTerm(""); setFolderSearchTerm(""); setSearchResults([]); }} className={cn("w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-bold transition-all text-left", activeWorkspaceTab === 'folders' ? "bg-orange-500 text-white shadow-lg shadow-orange-500/20" : "text-slate-400 hover:text-white hover:bg-slate-800")}><FolderOpen className="h-5 w-5" /> My Folders</button>
+                 <button onClick={() => { setActiveWorkspaceTab("files"); setSelectedFolder(null); setFileSearchTerm(""); setFolderSearchTerm(""); setSearchResults([]); }} className={cn("w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-bold transition-all text-left", activeWorkspaceTab === 'files' ? "bg-orange-500 text-white shadow-lg shadow-orange-500/20" : "text-slate-400 hover:text-white hover:bg-slate-800")}><FileText className="h-5 w-5" /> My Files</button>
+                 <button onClick={() => { setActiveWorkspaceTab("links"); setSelectedFolder(null); }} className={cn("w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-bold transition-all text-left", activeWorkspaceTab === 'links' ? "bg-orange-500 text-white shadow-lg shadow-orange-500/20" : "text-slate-400 hover:text-white hover:bg-slate-800")}><LinkIcon className="h-5 w-5" /> Links</button>
              </div>
-             <div className="p-4 mt-auto">
-                 <button onClick={() => setShowWorkspace(false)} className="flex items-center gap-2 text-slate-400 hover:text-white transition-colors text-sm font-medium w-full px-4 py-2 hover:bg-slate-800 rounded-lg">
-                     <ArrowLeft className="h-4 w-4" /> Back to Dashboard
-                 </button>
-             </div>
+             <div className="p-4 mt-auto"><button onClick={() => setShowWorkspace(false)} className="flex items-center gap-2 text-slate-400 hover:text-white transition-colors text-sm font-medium w-full px-4 py-2 hover:bg-slate-800 rounded-lg"><ArrowLeft className="h-4 w-4" /> Back to Dashboard</button></div>
           </div>
-
-          {/* MAIN CONTENT */}
           <div className="flex-1 bg-[#FFF8F0] flex flex-col relative overflow-hidden min-h-0">
              {activeWorkspaceTab === "folders" && !selectedFolder && renderFoldersView()}
              {activeWorkspaceTab === "files" && renderFilesView()}
@@ -1312,106 +1073,71 @@ export default function UserDashboard() {
           <div className="flex-shrink-0 mb-6 flex justify-between items-end">
             <h1 className="text-2xl font-bold text-slate-800">Project Folders</h1>
              <div className="flex items-center gap-4">
-                 {/* VIEW MODE TOGGLE */}
                  <div className="bg-slate-100 rounded-lg p-1 flex items-center gap-1">
-                     <button 
-                        onClick={() => setFolderViewMode("grid")}
-                        className={cn(
-                          "p-1.5 rounded-md transition-all flex items-center justify-center",
-                          folderViewMode === 'grid' ? "bg-white shadow-sm text-orange-600" : "text-slate-400 hover:text-slate-600"
-                        )}
-                     >
-                         <LayoutGrid className="h-4 w-4" />
-                     </button>
-                     <button 
-                        onClick={() => setFolderViewMode("list")}
-                        className={cn(
-                          "p-1.5 rounded-md transition-all flex items-center justify-center",
-                          folderViewMode === 'list' ? "bg-white shadow-sm text-orange-600" : "text-slate-400 hover:text-slate-600"
-                        )}
-                     >
-                         <List className="h-4 w-4" />
-                     </button>
+                     <button onClick={() => setFolderViewMode("grid")} className={cn("p-1.5 rounded-md transition-all flex items-center justify-center", folderViewMode === 'grid' ? "bg-white shadow-sm text-orange-600" : "text-slate-400 hover:text-slate-600")}><LayoutGrid className="h-4 w-4" /></button>
+                     <button onClick={() => setFolderViewMode("list")} className={cn("p-1.5 rounded-md transition-all flex items-center justify-center", folderViewMode === 'list' ? "bg-white shadow-sm text-orange-600" : "text-slate-400 hover:text-slate-600")}><List className="h-4 w-4" /></button>
                  </div>
-
                  <div className="relative">
                      {isSearching && folderSearchTerm.trim() ? <Loader2 className="absolute left-3 top-1/2 -translate-y-1/2 h-3 w-3 text-orange-500 animate-spin" /> : <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3 w-3 text-slate-400" />}
-                     <Input 
-                        value={folderSearchTerm}
-                        onChange={(e) => setFolderSearchTerm(e.target.value)}
-                        placeholder="Search folders..." 
-                        className="pl-8 w-64 h-9 rounded-full bg-white border-orange-100 text-xs shadow-sm focus-visible:ring-orange-400" 
-                     />
+                     <Input value={folderSearchTerm} onChange={(e) => setFolderSearchTerm(e.target.value)} placeholder="Search folders..." className="pl-8 w-64 h-9 rounded-full bg-white border-orange-100 text-xs shadow-sm focus-visible:ring-orange-400" />
                  </div>
              </div>
           </div>
 
-            {/* Create Folder Box */}
             {!folderSearchTerm && (
             <div className="bg-white rounded-[20px] p-5 shadow-sm border border-orange-100 mb-6 flex-shrink-0">
                 <div className="flex flex-col xl:flex-row gap-4 items-end">
-                    <div className="flex-1 w-full">
-                        <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1.5 block">New Folder Name</label>
-                        <Input value={newFolderName} onChange={(e) => setNewFolderName(e.target.value)} placeholder="e.g. Legal Documents 2025" className="rounded-xl border-orange-100 bg-orange-50/30 h-10 text-sm"/>
-                    </div>
-                    <div className="flex-1 w-full">
-                        <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1.5 block">Description (Optional)</label>
-                        <Input value={newFolderDesc} onChange={(e) => setNewFolderDesc(e.target.value)} placeholder="Project details..." className="rounded-xl border-orange-100 bg-orange-50/30 h-10 text-sm"/>
-                    </div>
-                    <Button onClick={handleCreateFolder} className="bg-orange-400 hover:bg-orange-500 text-white rounded-xl px-6 h-10 font-bold text-sm shadow-md shrink-0 w-full xl:w-auto mt-2 xl:mt-0">
-                        <Plus className="h-4 w-4 mr-2" /> Create
-                    </Button>
+                    <div className="flex-1 w-full"><label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1.5 block">New Folder Name</label><Input value={newFolderName} onChange={(e) => setNewFolderName(e.target.value)} placeholder="e.g. Legal Documents 2025" className="rounded-xl border-orange-100 bg-orange-50/30 h-10 text-sm"/></div>
+                    <div className="flex-1 w-full"><label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1.5 block">Description (Optional)</label><Input value={newFolderDesc} onChange={(e) => setNewFolderDesc(e.target.value)} placeholder="Project details..." className="rounded-xl border-orange-100 bg-orange-50/30 h-10 text-sm"/></div>
+                    <Button onClick={handleCreateFolder} className="bg-orange-400 hover:bg-orange-500 text-white rounded-xl px-6 h-10 font-bold text-sm shadow-md shrink-0 w-full xl:w-auto mt-2 xl:mt-0"><Plus className="h-4 w-4 mr-2" /> Create</Button>
                 </div>
             </div>
             )}
 
           <div className="flex-1 overflow-y-auto min-h-0">
             {folderViewMode === "grid" ? (
-                // GRID VIEW (WATERFALL)
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-5 pb-10">
                     {getDisplayFolders().map(folder => (
                         <motion.div 
                             key={folder.id} variants={fadeInUp} 
-                            className="bg-white rounded-[20px] p-5 shadow-sm border border-orange-50 hover:shadow-lg hover:border-orange-200 transition-all cursor-pointer group flex flex-col h-44 justify-between relative"
+                            // Removed overflow-hidden from the main container to allow menu to overflow
+                            // Added dynamic z-index to bring active card to front
+                            className={cn(
+                                "bg-white rounded-[20px] p-5 shadow-sm border border-orange-50 hover:shadow-lg hover:border-orange-200 transition-all cursor-pointer group flex flex-col h-44 justify-between relative",
+                                activeFolderMenu === folder.id ? "z-[50]" : "z-auto"
+                            )}
                             onClick={() => { setSelectedFolder(folder); setActiveWorkspaceTab("folders"); setFileSearchTerm(""); }}
                         >
-                            <div className="absolute top-0 right-0 w-20 h-20 bg-gradient-to-br from-orange-50/0 to-orange-50/50 rounded-bl-[100px] pointer-events-none rounded-tr-[20px]" />
-                            
+                            {/* Background wrapper that keeps rounded corners for gradients but doesn't clip children outside (like the menu) */}
+                            <div className="absolute inset-0 rounded-[20px] overflow-hidden pointer-events-none">
+                                <div className="absolute top-0 right-0 w-20 h-20 bg-gradient-to-br from-orange-50/0 to-orange-50/50 rounded-bl-[100px] rounded-tr-[20px]" />
+                            </div>
+
                             <div className="flex justify-between items-start relative z-30">
                                 <div className="h-10 w-10 rounded-xl bg-orange-50 text-orange-500 flex items-center justify-center border border-orange-100"><Folder className="h-5 w-5" /></div>
                                 <div className="relative" onClick={(e) => e.stopPropagation()}>
                                     <Button variant="ghost" size="icon" className="h-7 w-7 text-slate-300 hover:text-slate-500" onClick={() => setActiveFolderMenu(activeFolderMenu === folder.id ? null : folder.id)}><MoreVertical className="h-4 w-4" /></Button>
                                     {activeFolderMenu === folder.id && (
                                         <div className="absolute right-0 top-full mt-2 w-36 bg-white rounded-xl shadow-2xl border border-orange-200 z-[100] overflow-hidden py-1 ring-4 ring-orange-500/5">
-                                            <button 
-                                                onClick={() => { setActiveFolderMenu(null); handleInitiateReport('folder', folder.id, folder.name); }}
-                                                className="w-full text-left px-3 py-2.5 hover:bg-purple-50 text-purple-600 text-xs flex items-center gap-2 font-bold transition-colors"
-                                            >
-                                                <Sparkles className="h-3.5 w-3.5" /> Analyze
-                                            </button>
+                                            <button onClick={() => { setActiveFolderMenu(null); handleInitiateReport('folder', folder.id, folder.name); }} className="w-full text-left px-3 py-2.5 hover:bg-purple-50 text-purple-600 text-xs flex items-center gap-2 font-bold transition-colors"><Sparkles className="h-3.5 w-3.5" /> Analyze</button>
                                             <div className="h-px bg-slate-100 my-1"></div>
-                                            <button className="w-full text-left px-3 py-2.5 hover:bg-orange-50 text-slate-600 text-xs flex items-center gap-2 font-medium transition-colors">
-                                                <Pencil className="h-3.5 w-3.5" /> Edit
-                                            </button>
-                                            <button 
-                                                onClick={() => { setActiveFolderMenu(null); }} 
-                                                className="w-full text-left px-3 py-2.5 hover:bg-blue-50 text-blue-600 text-xs flex items-center gap-2 font-medium transition-colors"
-                                            >
-                                                <MessageSquare className="h-3.5 w-3.5" /> Chat
-                                            </button>
+                                            <button className="w-full text-left px-3 py-2.5 hover:bg-orange-50 text-slate-600 text-xs flex items-center gap-2 font-medium transition-colors"><Pencil className="h-3.5 w-3.5" /> Edit</button>
+                                            <button onClick={() => { setActiveFolderMenu(null); }} className="w-full text-left px-3 py-2.5 hover:bg-blue-50 text-blue-600 text-xs flex items-center gap-2 font-medium transition-colors"><MessageSquare className="h-3.5 w-3.5" /> Chat</button>
+                                            
+                                            {/* --- UPDATED YOUTUBE ACTION --- */}
                                              <button 
                                                 onClick={() => { 
                                                     setActiveFolderMenu(null);
-                                                    setActiveWorkspaceTab("links");
+                                                    setTargetFolderForLink(folder); // Set the specific folder
+                                                    setShowLinkModal(true); // Open Modal
                                                 }} 
                                                 className="w-full text-left px-3 py-2.5 hover:bg-red-50 text-red-600 text-xs flex items-center gap-2 font-medium transition-colors"
                                             >
                                                 <Youtube className="h-3.5 w-3.5" /> YouTube
                                             </button>
+                                            
                                             <div className="h-px bg-slate-100 my-1"></div>
-                                            <button className="w-full text-left px-3 py-2.5 hover:bg-slate-50 text-slate-400 hover:text-slate-600 text-xs flex items-center gap-2 font-medium transition-colors">
-                                                <Trash2 className="h-3.5 w-3.5" /> Delete
-                                            </button>
+                                            <button className="w-full text-left px-3 py-2.5 hover:bg-slate-50 text-slate-400 hover:text-slate-600 text-xs flex items-center gap-2 font-medium transition-colors"><Trash2 className="h-3.5 w-3.5" /> Delete</button>
                                         </div>
                                     )}
                                 </div>
@@ -1421,7 +1147,6 @@ export default function UserDashboard() {
                                 <p className="text-[10px] text-slate-400 truncate">{folder.desc}</p>
                             </div>
                             <div className="flex flex-col gap-1 z-10 relative">
-                                {/* CREATED BY - ADDED HERE */}
                                 <div className="flex items-center gap-1.5 text-[10px] font-medium text-slate-500">
                                     <User className="h-3 w-3 text-slate-400" /> 
                                     <span>Created by <span className="text-slate-700 font-bold">{folder.creatorName}</span></span>
@@ -1435,7 +1160,6 @@ export default function UserDashboard() {
                     ))}
                 </div>
             ) : (
-                // LIST VIEW (TABLE)
                 <div className="bg-white rounded-[24px] border border-orange-100 shadow-sm flex flex-col overflow-hidden mb-10">
                      <table className="w-full text-left border-separate border-spacing-0">
                         <thead className="bg-slate-50">
@@ -1449,64 +1173,33 @@ export default function UserDashboard() {
                         </thead>
                         <tbody className="divide-y divide-slate-50">
                             {getDisplayFolders().map(folder => (
-                                <tr 
-                                    key={folder.id} 
-                                    onClick={() => { setSelectedFolder(folder); setActiveWorkspaceTab("folders"); setFileSearchTerm(""); }}
-                                    className="group hover:bg-orange-50/30 transition-colors cursor-pointer"
-                                >
+                                <tr key={folder.id} onClick={() => { setSelectedFolder(folder); setActiveWorkspaceTab("folders"); setFileSearchTerm(""); }} className="group hover:bg-orange-50/30 transition-colors cursor-pointer">
                                     <td className="px-6 py-4">
-                                        <div className="flex items-center gap-3">
-                                            <div className="p-2 bg-orange-50 rounded-lg border border-orange-100 text-orange-500">
-                                                <Folder className="h-4 w-4" />
-                                            </div>
-                                            <div>
-                                                <span className="text-sm font-bold text-slate-700 block">{folder.name}</span>
-                                                <span className="text-[10px] text-slate-400">{folder.desc}</span>
-                                            </div>
-                                        </div>
+                                        <div className="flex items-center gap-3"><div className="p-2 bg-orange-50 rounded-lg border border-orange-100 text-orange-500"><Folder className="h-4 w-4" /></div><div><span className="text-sm font-bold text-slate-700 block">{folder.name}</span><span className="text-[10px] text-slate-400">{folder.desc}</span></div></div>
                                     </td>
-                                    {/* Created By Column */}
-                                    <td className="px-6 py-4">
-                                         <div className="flex items-center gap-2">
-                                            <div className="h-5 w-5 rounded-full bg-slate-100 flex items-center justify-center text-slate-500 text-[10px] font-bold">
-                                                {folder.creatorName?.charAt(0) || "U"}
-                                            </div>
-                                            <span className="text-xs font-medium text-slate-600">{folder.creatorName}</span>
-                                         </div>
-                                    </td>
-                                    <td className="px-6 py-4 text-center">
-                                        <Badge variant="secondary" className="bg-slate-100 text-slate-500 border-slate-200">{folder.fileCount}</Badge>
-                                    </td>
+                                    <td className="px-6 py-4"><div className="flex items-center gap-2"><div className="h-5 w-5 rounded-full bg-slate-100 flex items-center justify-center text-slate-500 text-[10px] font-bold">{folder.creatorName?.charAt(0) || "U"}</div><span className="text-xs font-medium text-slate-600">{folder.creatorName}</span></div></td>
+                                    <td className="px-6 py-4 text-center"><Badge variant="secondary" className="bg-slate-100 text-slate-500 border-slate-200">{folder.fileCount}</Badge></td>
                                     <td className="px-6 py-4 text-xs text-slate-400 text-right">{folder.createdAt}</td>
                                     <td className="px-6 py-4 text-right relative">
                                         <div onClick={(e) => e.stopPropagation()} className="inline-block relative">
-                                            <Button variant="ghost" size="icon" className="h-8 w-8 text-slate-300 hover:text-slate-600" onClick={() => setActiveFolderMenu(activeFolderMenu === folder.id ? null : folder.id)}>
-                                                <MoreVertical className="h-4 w-4" />
-                                            </Button>
+                                            <Button variant="ghost" size="icon" className="h-8 w-8 text-slate-300 hover:text-slate-600" onClick={() => setActiveFolderMenu(activeFolderMenu === folder.id ? null : folder.id)}><MoreVertical className="h-4 w-4" /></Button>
                                             {activeFolderMenu === folder.id && (
                                                 <div className="absolute right-0 top-full mt-1 w-32 bg-white rounded-xl shadow-xl border border-orange-100 z-[50] overflow-hidden py-1">
-                                                    <button className="w-full text-left px-3 py-2 hover:bg-orange-50 text-slate-600 text-xs flex items-center gap-2 font-medium">
-                                                        <Pencil className="h-3 w-3" /> Edit
-                                                    </button>
-                                                    <button 
-                                                        onClick={() => { setActiveFolderMenu(null); }} 
-                                                        className="w-full text-left px-3 py-2 hover:bg-blue-50 text-blue-600 text-xs flex items-center gap-2 font-medium"
-                                                    >
-                                                        <MessageSquare className="h-3 w-3" /> Chat
-                                                    </button>
+                                                    <button className="w-full text-left px-3 py-2 hover:bg-orange-50 text-slate-600 text-xs flex items-center gap-2 font-medium"><Pencil className="h-3 w-3" /> Edit</button>
+                                                    <button onClick={() => { setActiveFolderMenu(null); }} className="w-full text-left px-3 py-2 hover:bg-blue-50 text-blue-600 text-xs flex items-center gap-2 font-medium"><MessageSquare className="h-3 w-3" /> Chat</button>
+                                                    {/* --- UPDATED YOUTUBE ACTION --- */}
                                                     <button 
                                                         onClick={() => { 
                                                             setActiveFolderMenu(null);
-                                                            setActiveWorkspaceTab("links");
+                                                            setTargetFolderForLink(folder); 
+                                                            setShowLinkModal(true); 
                                                         }} 
                                                         className="w-full text-left px-3 py-2 hover:bg-red-50 text-red-600 text-xs flex items-center gap-2 font-medium"
                                                     >
                                                         <Youtube className="h-3 w-3" /> YouTube
                                                     </button>
                                                     <div className="h-px bg-slate-100 my-1"></div>
-                                                    <button className="w-full text-left px-3 py-2 hover:bg-slate-50 text-slate-400 hover:text-slate-600 text-xs flex items-center gap-2 font-medium">
-                                                        <Trash2 className="h-3 w-3" /> Delete
-                                                    </button>
+                                                    <button className="w-full text-left px-3 py-2 hover:bg-slate-50 text-slate-400 hover:text-slate-600 text-xs flex items-center gap-2 font-medium"><Trash2 className="h-3 w-3" /> Delete</button>
                                                 </div>
                                             )}
                                         </div>
@@ -1517,13 +1210,7 @@ export default function UserDashboard() {
                      </table>
                 </div>
             )}
-
-            {getDisplayFolders().length === 0 && (
-                 <div className="flex flex-col items-center justify-center h-40 text-slate-400">
-                     <Folder className="h-10 w-10 mb-2 opacity-20" />
-                     <p>No folders found matching "{folderSearchTerm}"</p>
-                 </div>
-            )}
+            {getDisplayFolders().length === 0 && (<div className="flex flex-col items-center justify-center h-40 text-slate-400"><Folder className="h-10 w-10 mb-2 opacity-20" /><p>No folders found matching "{folderSearchTerm}"</p></div>)}
           </div>
       </div>
   );
@@ -1532,28 +1219,11 @@ export default function UserDashboard() {
     <div className="flex-1 flex flex-col h-full p-6 overflow-hidden">
          <div className="flex-shrink-0 mb-6">
             <h1 className="text-2xl font-bold text-slate-800">External Links</h1>
-            <p className="text-xs text-slate-500 mt-1">Manage and analyze external URLs for intelligence.</p>
+            <p className="text-xs text-slate-500 mt-1">Manage external URLs added to your folders.</p>
          </div>
 
-         {/* Add Link Section */}
-         <div className="bg-white rounded-[20px] p-5 shadow-sm border border-orange-100 mb-6 flex-shrink-0">
-             <div className="flex flex-col xl:flex-row gap-4 items-end">
-                 <div className="flex-1 w-full">
-                     <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1.5 block">Add URL</label>
-                     <Input 
-                        value={newLinkUrl} 
-                        onChange={(e) => setNewLinkUrl(e.target.value)} 
-                        placeholder="e.g. https://www.youtube.com/watch?v=..." 
-                        className="rounded-xl border-orange-100 bg-orange-50/30 h-10 text-sm"
-                     />
-                 </div>
-                 <Button onClick={handleAddLink} className="bg-orange-400 hover:bg-orange-500 text-white rounded-xl px-6 h-10 font-bold text-sm shadow-md shrink-0 w-full xl:w-auto mt-2 xl:mt-0">
-                     <Plus className="h-4 w-4 mr-2" /> Add Link
-                 </Button>
-             </div>
-         </div>
+         {/* --- ADD LINK BOX REMOVED (Added via Folder Menu) --- */}
 
-         {/* Links Table */}
          <div className="flex-1 bg-white rounded-[24px] border border-orange-100 shadow-sm flex flex-col overflow-hidden">
              <div className="flex-1 overflow-y-auto min-h-0 relative">
                 <table className="w-full text-left border-separate border-spacing-0">
@@ -1561,82 +1231,56 @@ export default function UserDashboard() {
                          <tr>
                              <th className="px-6 py-3 text-[10px] font-bold text-slate-400 uppercase tracking-wider border-b border-slate-50 w-20">Sr No</th>
                              <th className="px-6 py-3 text-[10px] font-bold text-slate-400 uppercase tracking-wider border-b border-slate-50">URL Details</th>
+                             {/* --- NEW COLUMN: FOLDER --- */}
+                             <th className="px-6 py-3 text-[10px] font-bold text-slate-400 uppercase tracking-wider border-b border-slate-50">Folder</th>
                              <th className="px-6 py-3 text-[10px] font-bold text-slate-400 uppercase tracking-wider border-b border-slate-50 text-center w-40">Actions</th>
                              <th className="px-6 py-3 text-[10px] font-bold text-slate-400 uppercase tracking-wider border-b border-slate-50 text-center w-32">Link</th>
                          </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-50">
-                        {links.length > 0 ? links.map((link, index) => (
-                            <tr key={link.id} className="group hover:bg-orange-50/30 transition-colors">
-                                <td className="px-6 py-4 text-xs font-bold text-slate-400">
-                                    {String(index + 1).padStart(2, '0')}
-                                </td>
-                                <td className="px-6 py-4">
-                                    <div className="flex items-center gap-3">
-                                        <div className="p-2 bg-slate-50 rounded-lg border border-slate-100 text-slate-400">
-                                            <LinkIcon className="h-4 w-4" />
+                        {links.length > 0 ? links.map((link, index) => {
+                             // Find the folder name for this link
+                             const linkedFolder = folders.find(f => f.id === link.folderId);
+
+                             return (
+                                <tr key={link.id} className="group hover:bg-orange-50/30 transition-colors">
+                                    <td className="px-6 py-4 text-xs font-bold text-slate-400">{String(index + 1).padStart(2, '0')}</td>
+                                    <td className="px-6 py-4">
+                                        <div className="flex items-center gap-3">
+                                            <div className="p-2 bg-slate-50 rounded-lg border border-slate-100 text-slate-400"><LinkIcon className="h-4 w-4" /></div>
+                                            <div className="min-w-0 max-w-lg">
+                                                <p className="text-xs font-bold text-slate-700 truncate">{link.title || link.url}</p>
+                                                <p className="text-[10px] text-slate-400 font-medium truncate">{link.url}</p>
+                                            </div>
                                         </div>
-                                        <div className="min-w-0 max-w-lg">
-                                            <p className="text-xs font-bold text-slate-700 truncate">{link.title || link.url}</p>
-                                            <p className="text-[10px] text-slate-400 font-medium truncate">{link.url}</p>
-                                        </div>
-                                    </div>
-                                </td>
-                                
-                                {/* ACTIONS: Run OCR, View Content, Chat */}
-                                <td className="px-6 py-4 text-center">
-                                    <div className="flex justify-center gap-2">
-                                        {link.ocrStatus === 'pending' ? (
-                                             <Button 
-                                                size="sm" 
-                                                onClick={() => handleRunOCR(link)}
-                                                disabled={processingLinkId === link.id}
-                                                className="h-8 px-3 text-[10px] font-bold bg-white text-slate-600 hover:text-orange-600 border border-slate-200 hover:border-orange-200 rounded-full flex items-center gap-1 shadow-sm"
-                                            >
-                                                {processingLinkId === link.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <RefreshCw className="h-3 w-3" />}
-                                                Run OCR
-                                            </Button>
+                                    </td>
+                                    
+                                    {/* --- SHOW FOLDER NAME --- */}
+                                    <td className="px-6 py-4">
+                                        {linkedFolder ? (
+                                            <div className="flex items-center gap-2">
+                                                <Folder className="h-3 w-3 text-orange-400" />
+                                                <span className="text-xs font-medium text-slate-600 bg-orange-50 px-2 py-0.5 rounded-md border border-orange-100">{linkedFolder.name}</span>
+                                            </div>
                                         ) : (
-                                            <Button 
-                                                size="sm" 
-                                                onClick={() => handleOpenTextViewer(link)}
-                                                className="h-8 px-3 text-[10px] font-bold bg-white text-slate-600 hover:text-emerald-600 border border-slate-200 hover:border-emerald-200 rounded-full flex items-center gap-1 shadow-sm"
-                                            >
-                                                <Eye className="h-3 w-3" /> View Content
-                                            </Button>
+                                            <span className="text-xs text-slate-300 italic">Unassigned</span>
                                         )}
+                                    </td>
 
-                                        <Button 
-                                            size="sm" 
-                                            onClick={() => handleOpenChat(link)}
-                                            className="h-8 px-3 text-[10px] font-bold bg-slate-900 text-white hover:bg-slate-700 rounded-full flex items-center gap-1 shadow-sm"
-                                        >
-                                            <MessageSquare className="h-3 w-3" /> Chat
-                                        </Button>
-                                    </div>
-                                </td>
-
-                                {/* ORIGINAL LINK */}
-                                <td className="px-6 py-4 text-center">
-                                    <Button 
-                                        variant="ghost" 
-                                        size="sm" 
-                                        onClick={() => window.open(link.originalUrl, '_blank')}
-                                        className="h-8 w-8 rounded-full text-slate-400 hover:text-blue-600 hover:bg-blue-50"
-                                    >
-                                        <ExternalLink className="h-4 w-4" />
-                                    </Button>
-                                </td>
-                            </tr>
-                        )) : (
-                            <tr>
-                                <td colSpan={4} className="h-40 text-center">
-                                    <div className="flex flex-col items-center justify-center text-slate-300">
-                                        <LinkIcon className="h-8 w-8 mb-2 opacity-20" />
-                                        <p className="text-xs font-medium">No links added yet.</p>
-                                    </div>
-                                </td>
-                            </tr>
+                                    <td className="px-6 py-4 text-center">
+                                        <div className="flex justify-center gap-2">
+                                            {/* --- Run OCR Button Removed Here --- */}
+                                            {link.ocrStatus !== 'pending' && (
+                                                <Button size="sm" onClick={() => handleOpenTextViewer(link)} className="h-8 px-3 text-[10px] font-bold bg-white text-slate-600 hover:text-emerald-600 border border-slate-200 hover:border-emerald-200 rounded-full flex items-center gap-1 shadow-sm"><Eye className="h-3 w-3" /> View Content</Button>
+                                            )}
+                                            <Button size="sm" onClick={() => handleOpenChat(link)} className="h-8 px-3 text-[10px] font-bold bg-slate-900 text-white hover:bg-slate-700 rounded-full flex items-center gap-1 shadow-sm"><MessageSquare className="h-3 w-3" /> Chat</Button>
+                                        </div>
+                                    </td>
+                                    <td className="px-6 py-4 text-center"><Button variant="ghost" size="sm" onClick={() => window.open(link.originalUrl, '_blank')} className="h-8 w-8 rounded-full text-slate-400 hover:text-blue-600 hover:bg-blue-50"><ExternalLink className="h-4 w-4" /></Button></td>
+                                </tr>
+                            );
+                        }) : (
+                            <tr><td colSpan={5} className="h-40 text-center"><div className="flex flex-col items-center justify-center text-slate-300"><LinkIcon className="h-8 w-8 mb-2 opacity-20" /><p className="text-xs font-medium">No links added yet.</p></div></td></tr>
                         )}
                     </tbody>
                 </table>
@@ -1649,9 +1293,7 @@ export default function UserDashboard() {
     const fileTableContent = (
          <div className="h-full bg-white rounded-[24px] border border-orange-100 shadow-sm flex flex-col overflow-hidden">
              <div className="p-4 border-b border-slate-50 flex items-center justify-between bg-slate-50/30 shrink-0">
-                 <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider ml-2">
-                    {isSearching ? `Search Results (${paginatedFiles.length})` : "Files"}
-                 </span>
+                 <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider ml-2">{isSearching ? `Search Results (${paginatedFiles.length})` : "Files"}</span>
                  <div className="flex items-center gap-2"><span className="text-[10px] font-bold text-orange-500 bg-orange-50 px-2 py-0.5 rounded-md">{paginatedFiles.length} items</span></div>
              </div>
              <div className="flex-1 overflow-y-auto min-h-0 relative">
@@ -1666,12 +1308,7 @@ export default function UserDashboard() {
                     <tbody className="divide-y divide-slate-50">
                         {paginatedFiles.map((file, i) => {
                             const fileFolder = folders.find(f => String(f.id) === String(file.folderId));
-                            const fileUrl = file.publicPath 
-                                ? (file.publicPath.startsWith('http') 
-                                    ? file.publicPath 
-                                    : `http://192.168.11.245:5000${file.publicPath.startsWith('/') ? '' : '/'}${file.publicPath}`) 
-                                : "#";
-                            
+                            const fileUrl = file.publicPath ? (file.publicPath.startsWith('http') ? file.publicPath : `http://192.168.11.245:5000${file.publicPath.startsWith('/') ? '' : '/'}${file.publicPath}`) : "#";
                             return (
                             <tr key={file.id} className="group hover:bg-orange-50/30 transition-colors">
                                 <td className="px-4 py-2.5">
@@ -1681,34 +1318,22 @@ export default function UserDashboard() {
                                             <p className="text-xs font-bold text-slate-700 truncate max-w-[180px]">{file.name}</p>
                                             <p className="text-[10px] text-slate-400 font-medium flex items-center gap-1">
                                                 {formatBytes(file.size)} <span className="text-slate-300">•</span> {file.createdAt ? new Date(file.createdAt).toLocaleDateString() : "Unknown"}
-                                                {fileFolder && !selectedFolder && (
-                                                    <> <span className="text-slate-300">•</span> <span className="text-orange-500 bg-orange-50 px-1.5 rounded-sm flex items-center gap-0.5 border border-orange-100/50"><Folder className="h-2 w-2" /> {fileFolder.name}</span> </>
-                                                )}
+                                                {fileFolder && !selectedFolder && (<> <span className="text-slate-300">•</span> <span className="text-orange-500 bg-orange-50 px-1.5 rounded-sm flex items-center gap-0.5 border border-orange-100/50"><Folder className="h-2 w-2" /> {fileFolder.name}</span> </>)}
                                             </p>
                                         </div>
                                     </div>
                                 </td>
-                                <td className="px-4 py-2.5">
-                                    {getFileIconByExtension(file.extension, "h-6 w-6")}
-                                </td>
+                                <td className="px-4 py-2.5">{getFileIconByExtension(file.extension, "h-6 w-6")}</td>
                                 <td className="px-4 py-2.5 text-right w-36">
                                     <div className="flex justify-end gap-1">
-                                        <Button 
-                                            onClick={() => handleInitiateReport('file', file.id, file.name)}
-                                            size="icon" variant="ghost" className="h-7 w-7 hover:bg-purple-50 text-slate-400 hover:text-purple-600 rounded-full"
-                                            title="Analyze File"
-                                        >
-                                            <Sparkles className="h-3.5 w-3.5" />
-                                        </Button>
+                                        <Button onClick={() => handleInitiateReport('file', file.id, file.name)} size="icon" variant="ghost" className="h-7 w-7 hover:bg-purple-50 text-slate-400 hover:text-purple-600 rounded-full" title="Analyze File"><Sparkles className="h-3.5 w-3.5" /></Button>
                                         <Button onClick={() => setViewingFile(file)} size="icon" variant="ghost" className="h-7 w-7 hover:bg-blue-50 text-slate-400 hover:text-blue-600 rounded-full"><Eye className="h-3.5 w-3.5" /></Button>
                                         <a href={fileUrl} download><Button size="icon" variant="ghost" className="h-7 w-7 hover:bg-emerald-50 text-slate-400 hover:text-emerald-600 rounded-full"><Download className="h-3.5 w-3.5" /></Button></a>
                                     </div>
                                 </td>
                             </tr>
                         )})}
-                        {paginatedFiles.length === 0 && (
-                            <tr><td colSpan={3} className="h-40 text-center"><div className="flex flex-col items-center justify-center text-slate-300"><Search className="h-8 w-8 mb-2 opacity-20" /><p className="text-xs font-medium">No results found.</p></div></td></tr>
-                        )}
+                        {paginatedFiles.length === 0 && (<tr><td colSpan={3} className="h-40 text-center"><div className="flex flex-col items-center justify-center text-slate-300"><Search className="h-8 w-8 mb-2 opacity-20" /><p className="text-xs font-medium">No results found.</p></div></td></tr>)}
                     </tbody>
                 </table>
              </div>
@@ -1726,84 +1351,46 @@ export default function UserDashboard() {
              <div className="flex items-center gap-4">
                  <div>
                     <h1 className="text-xl font-bold text-slate-800 flex items-center gap-2">
-                    {selectedFolder ? (
-                        <> <span className="text-slate-400 cursor-pointer hover:text-orange-500 text-lg" onClick={() => setActiveWorkspaceTab("folders")}>Folders</span> <ChevronRight className="h-5 w-5 text-slate-300" /> {selectedFolder.name} </>
-                    ) : "All Files"}
+                    {selectedFolder ? (<> <span className="text-slate-400 cursor-pointer hover:text-orange-500 text-lg" onClick={() => setActiveWorkspaceTab("folders")}>Folders</span> <ChevronRight className="h-5 w-5 text-slate-300" /> {selectedFolder.name} </>) : "All Files"}
                     </h1>
                     <p className="text-xs text-slate-500 mt-0.5">{selectedFolder ? "Manage folder content." : "View all documents."}</p>
                  </div>
-                 {/* ANALYZE BUTTON FOR SELECTED FOLDER */}
                  {selectedFolder && (
-                     <Button 
-                        size="sm" 
-                        onClick={() => handleInitiateReport('folder', selectedFolder.id, selectedFolder.name)}
-                        className="bg-slate-900 text-white hover:bg-slate-800 text-xs font-bold rounded-full h-8 px-4 flex items-center gap-2 shadow-lg shadow-slate-900/10 ml-4"
-                     >
+                     <Button size="sm" onClick={() => handleInitiateReport('folder', selectedFolder.id, selectedFolder.name)} className="bg-slate-900 text-white hover:bg-slate-800 text-xs font-bold rounded-full h-8 px-4 flex items-center gap-2 shadow-lg shadow-slate-900/10 ml-4">
                          <Sparkles className="h-3 w-3 text-orange-300" /> Analyze Folder
                      </Button>
                  )}
              </div>
              <div className="relative">
                  {isSearching && fileSearchTerm.trim() ? <Loader2 className="absolute left-3 top-1/2 -translate-y-1/2 h-3 w-3 text-orange-500 animate-spin" /> : <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3 w-3 text-slate-400" />}
-                 <Input 
-                    ref={searchInputRef}
-                    value={fileSearchTerm}
-                    onChange={(e) => setFileSearchTerm(e.target.value)}
-                    placeholder={selectedFolder ? `Search in ${selectedFolder.name}...` : "Search all files..."} 
-                    className="pl-8 w-64 h-9 rounded-full bg-white border-orange-100 text-xs shadow-sm focus-visible:ring-orange-400" 
-                 />
+                 <Input ref={searchInputRef} value={fileSearchTerm} onChange={(e) => setFileSearchTerm(e.target.value)} placeholder={selectedFolder ? `Search in ${selectedFolder.name}...` : "Search all files..."} className="pl-8 w-64 h-9 rounded-full bg-white border-orange-100 text-xs shadow-sm focus-visible:ring-orange-400" />
              </div>
          </div>
          <div className="flex-1 p-6 overflow-hidden min-h-0">
              {selectedFolder ? (
                  <div className="h-full grid grid-cols-1 lg:grid-cols-2 gap-6 min-h-0">
                      <div className="h-full flex flex-col min-h-0">
-                         {/* ATTRACTIVE UPLOAD SECTION */}
                          <motion.div 
-                             whileHover={{ scale: 1.01, borderColor: "rgba(249, 115, 22, 0.5)" }}
-                             whileTap={{ scale: 0.99 }}
-                             animate={isDragging ? { scale: 1.02, backgroundColor: "rgba(255, 247, 237, 0.9)", borderColor: "#f97316" } : {}}
-                             className={cn(
-                                 "flex-1 rounded-[24px] border border-orange-100 bg-white/40 backdrop-blur-xl shadow-lg relative overflow-hidden group cursor-pointer flex flex-col items-center justify-center p-8 transition-all duration-300",
-                                 isDragging ? "ring-4 ring-orange-500/10" : ""
-                             )}
-                             onDragOver={(e) => { e.preventDefault(); setIsDragging(true); }}
-                             onDragLeave={(e) => { e.preventDefault(); setIsDragging(false); }}
-                             onDrop={onDrop}
-                             onClick={() => fileInputRef.current?.click()}
+                             whileHover={{ scale: 1.01, borderColor: "rgba(249, 115, 22, 0.5)" }} whileTap={{ scale: 0.99 }} animate={isDragging ? { scale: 1.02, backgroundColor: "rgba(255, 247, 237, 0.9)", borderColor: "#f97316" } : {}}
+                             className={cn("flex-1 rounded-[24px] border border-orange-100 bg-white/40 backdrop-blur-xl shadow-lg relative overflow-hidden group cursor-pointer flex flex-col items-center justify-center p-8 transition-all duration-300", isDragging ? "ring-4 ring-orange-500/10" : "")}
+                             onDragOver={(e) => { e.preventDefault(); setIsDragging(true); }} onDragLeave={(e) => { e.preventDefault(); setIsDragging(false); }} onDrop={onDrop} onClick={() => fileInputRef.current?.click()}
                          >
-                             {/* Decorative Background Elements */}
                              <div className="absolute inset-0 bg-gradient-to-br from-white via-transparent to-orange-50/50 opacity-50" />
                              <div className="absolute -top-10 -right-10 w-40 h-40 bg-orange-200/20 rounded-full blur-3xl group-hover:bg-orange-300/30 transition-colors" />
-                             
                              <input type="file" multiple className="hidden" ref={fileInputRef} onChange={onFileSelectChange} />
-                             
                              <div className="relative z-10 flex flex-col items-center text-center">
-                                 <motion.div 
-                                    className={cn(
-                                        "h-24 w-24 rounded-3xl flex items-center justify-center shadow-xl mb-6 transition-all duration-500",
-                                        isDragging ? "bg-orange-500 text-white rotate-12 scale-110" : "bg-gradient-to-br from-white to-orange-50 text-orange-500 border border-orange-100 group-hover:scale-110 group-hover:-rotate-3 group-hover:shadow-2xl group-hover:border-orange-200"
-                                    )}
-                                 >
+                                 <motion.div className={cn("h-24 w-24 rounded-3xl flex items-center justify-center shadow-xl mb-6 transition-all duration-500", isDragging ? "bg-orange-500 text-white rotate-12 scale-110" : "bg-gradient-to-br from-white to-orange-50 text-orange-500 border border-orange-100 group-hover:scale-110 group-hover:-rotate-3 group-hover:shadow-2xl group-hover:border-orange-200")}>
                                      {isDragging ? <UploadCloud className="h-10 w-10 animate-bounce" /> : <UploadCloud className="h-10 w-10" />}
                                  </motion.div>
                                  <h3 className="font-black text-2xl text-slate-800 mb-2 tracking-tight">Upload Documents</h3>
-                                 <p className="text-slate-500 text-sm max-w-[240px] leading-relaxed">
-                                     Drag & Drop files here or <span className="text-orange-500 font-bold underline decoration-2 underline-offset-2">browse</span> from your computer.
-                                 </p>
-                                 <div className="mt-8 flex gap-3">
-                                     <Badge variant="secondary" className="bg-white/80 backdrop-blur border-orange-100 text-slate-400 font-normal">PDF</Badge>
-                                     <Badge variant="secondary" className="bg-white/80 backdrop-blur border-orange-100 text-slate-400 font-normal">DOCX</Badge>
-                                     <Badge variant="secondary" className="bg-white/80 backdrop-blur border-orange-100 text-slate-400 font-normal">JPG</Badge>
-                                 </div>
+                                 <p className="text-slate-500 text-sm max-w-[240px] leading-relaxed">Drag & Drop files here or <span className="text-orange-500 font-bold underline decoration-2 underline-offset-2">browse</span> from your computer.</p>
+                                 <div className="mt-8 flex gap-3"><Badge variant="secondary" className="bg-white/80 backdrop-blur border-orange-100 text-slate-400 font-normal">PDF</Badge><Badge variant="secondary" className="bg-white/80 backdrop-blur border-orange-100 text-slate-400 font-normal">DOCX</Badge><Badge variant="secondary" className="bg-white/80 backdrop-blur border-orange-100 text-slate-400 font-normal">JPG</Badge></div>
                              </div>
                          </motion.div>
                      </div>
                      <div className="h-full min-h-0">{fileTableContent}</div>
                  </div>
-             ) : (
-                 <div className="h-full min-h-0">{fileTableContent}</div>
-             )}
+             ) : (<div className="h-full min-h-0">{fileTableContent}</div>)}
          </div>
       </div>
   );
@@ -1825,7 +1412,9 @@ export default function UserDashboard() {
         {showWorkspace && renderWorkspacePopup()}
         {showUploadModal && renderUploadModal()}
         {showReportModal && renderReportModal()}
-        {/* Render New Chat and Text Viewer Overlays */}
+        {/* --- NEW LINK MODAL RENDER --- */}
+        {showLinkModal && renderLinkModal()}
+        
         {activeChatLink && RenderChatOverlay()}
         {viewingTextLink && RenderTextViewer()}
       </AnimatePresence>
@@ -1843,12 +1432,26 @@ export default function UserDashboard() {
                  </div>
              </div>
              <div className="flex-1 overflow-y-auto pr-2 pb-10">
+                {/* --- ATTRACTIVE KPI CARDS --- */}
                 <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
-                    <GlowCard className="p-6 flex items-center justify-between"><div><p className="text-xs font-bold text-slate-400 uppercase tracking-wider">Analysis Score</p><h3 className="text-3xl font-black text-slate-800 mt-2">94.2%</h3><div className="flex items-center gap-1 text-xs font-bold text-emerald-600 mt-1"><ArrowUpRight className="h-3 w-3" /> +2.4% vs last week</div></div><div className="h-12 w-12 bg-emerald-50 rounded-2xl flex items-center justify-center text-emerald-600 shadow-sm"><Activity className="h-6 w-6" /></div></GlowCard>
-                    <GlowCard className="p-6 flex items-center justify-between"><div><p className="text-xs font-bold text-slate-400 uppercase tracking-wider">Processing Vol</p><h3 className="text-3xl font-black text-slate-800 mt-2">{stats.processed} <span className="text-sm text-slate-400">docs</span></h3><div className="flex items-center gap-1 text-xs font-bold text-orange-600 mt-1"><Clock className="h-3 w-3" /> {stats.hoursSaved} hrs saved</div></div><div className="h-12 w-12 bg-orange-50 rounded-2xl flex items-center justify-center text-orange-600 shadow-sm"><Zap className="h-6 w-6" /></div></GlowCard>
-                    <GlowCard className="p-6 flex items-center justify-between"><div><p className="text-xs font-bold text-slate-400 uppercase tracking-wider">Critical Flags</p><h3 className="text-3xl font-black text-slate-800 mt-2">3 <span className="text-sm text-slate-400 font-medium">Alerts</span></h3><p className="text-xs text-slate-400 mt-1">Legal compliance alerts</p></div><div className="h-12 w-12 bg-rose-50 rounded-2xl flex items-center justify-center text-rose-500 shadow-sm"><AlertCircle className="h-6 w-6" /></div></GlowCard>
-                    <GlowCard className="p-0 border-none bg-gradient-to-br from-slate-900 to-slate-800 text-white flex flex-col justify-center items-center text-center cursor-pointer hover:scale-[1.02] transition-transform shadow-xl shadow-slate-900/20"><Sparkles className="h-8 w-8 text-yellow-400 mb-2" /><h3 className="font-bold text-lg">Generate Report</h3><p className="text-xs text-slate-400 mt-1">Create Summary PDF</p></GlowCard>
+                    <GlowCard className="p-6 flex items-center justify-between">
+                        <div><p className="text-xs font-bold text-slate-400 uppercase tracking-wider">Analysis Score</p><h3 className="text-3xl font-black text-slate-800 mt-2">94.2%</h3><div className="flex items-center gap-1 text-xs font-bold text-emerald-600 mt-1"><ArrowUpRight className="h-3 w-3" /> +2.4% vs last week</div></div>
+                        <div className="h-14 w-14 bg-emerald-50 rounded-2xl flex items-center justify-center text-emerald-600 shadow-sm border border-emerald-100"><Activity className="h-7 w-7" /></div>
+                    </GlowCard>
+                    <GlowCard className="p-6 flex items-center justify-between">
+                        <div><p className="text-xs font-bold text-slate-400 uppercase tracking-wider">Processing Vol</p><h3 className="text-3xl font-black text-slate-800 mt-2">{stats.processed} <span className="text-sm text-slate-400">docs</span></h3><div className="flex items-center gap-1 text-xs font-bold text-orange-600 mt-1"><Clock className="h-3 w-3" /> {stats.hoursSaved} hrs saved</div></div>
+                        <div className="h-14 w-14 bg-orange-50 rounded-2xl flex items-center justify-center text-orange-600 shadow-sm border border-orange-100"><Zap className="h-7 w-7" /></div>
+                    </GlowCard>
+                    <GlowCard className="p-6 flex items-center justify-between">
+                        <div><p className="text-xs font-bold text-slate-400 uppercase tracking-wider">Critical Flags</p><h3 className="text-3xl font-black text-slate-800 mt-2">3 <span className="text-sm text-slate-400 font-medium">Alerts</span></h3><p className="text-xs text-slate-400 mt-1">Legal compliance alerts</p></div>
+                        <div className="h-14 w-14 bg-rose-50 rounded-2xl flex items-center justify-center text-rose-500 shadow-sm border border-rose-100"><AlertCircle className="h-7 w-7" /></div>
+                    </GlowCard>
+                    <GlowCard className="p-0 border-none bg-gradient-to-br from-slate-900 to-slate-800 text-white flex flex-col justify-center items-center text-center cursor-pointer hover:scale-[1.02] transition-transform shadow-xl shadow-slate-900/20 group">
+                        <div className="absolute inset-0 bg-gradient-to-tr from-white/10 to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
+                        <Sparkles className="h-8 w-8 text-yellow-400 mb-2" /><h3 className="font-bold text-lg">Generate Report</h3><p className="text-xs text-slate-400 mt-1">Create Summary PDF</p>
+                    </GlowCard>
                 </div>
+                
                 <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
                     <div className="lg:col-span-1">
                         <GlowCard className="p-6 h-[400px] flex flex-col">

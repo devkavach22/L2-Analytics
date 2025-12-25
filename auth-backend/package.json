@@ -61,6 +61,7 @@
     "unzipper": "^0.12.3",
     "wink-eng-lite-web-model": "^1.8.1",
     "wink-nlp": "^2.4.0",
+    "ws": "^8.18.3",
     "xlsx": "^0.18.5"
   },
   "devDependencies": {

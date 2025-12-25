@@ -8,7 +8,7 @@ import { Badge } from "@/components/ui/badge";
 import {
   Search,
   FileText,
-  FolderOpen, // Added for folder results
+  FolderOpen,
   ArrowRight,
   TrendingUp,
   Flame,
@@ -18,7 +18,11 @@ import {
   Signal,
   BarChart3,
   AlertTriangle,
-  MapPin // Added for location context
+  MapPin,
+  X,            
+  Maximize2,    
+  Download,     
+  Eye           
 } from "lucide-react";
 import { 
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, ResponsiveContainer,
@@ -29,7 +33,7 @@ import { useSpring, animated } from "react-spring";
 import Lottie from "lottie-react"; 
 import { clsx, type ClassValue } from "clsx";
 import { twMerge } from "tailwind-merge";
-import DOMPurify from "dompurify"; // Optional: Good practice for innerHTML, but standard sanitization works too if not installed
+import DOMPurify from "dompurify"; 
 
 // --- LOTTIE JSON DATA SOURCES ---
 const LOTTIE_SEARCHING = "https://lottie.host/5f5d8004-9a74-42b7-8488-82500c242337/C8y3yqG7xJ.json";
@@ -76,34 +80,133 @@ const GlassCard = ({ children, className = "", onClick, hoverEffect = true }: an
 
 // --- COMPONENT: HIGHLIGHTED TEXT RENDERER ---
 const HighlightedText = ({ content }: { content: string }) => {
-    // We replace <em> tags with a styled span to create the "Highlighter" effect
-    // CSS module or global css usually handles this, but here we enforce via class replacement or simple dangerouslySetInnerHTML 
-    // assuming the API sends <em> or <b> for matches.
+    // Sanitize to allow <strong> but prevent script injection
+    const cleanContent = DOMPurify.sanitize(content, { ALLOWED_TAGS: ['strong', 'em', 'b'] });
     
     return (
         <span 
-            className="text-slate-600 [&>em]:bg-yellow-200 [&>em]:text-orange-900 [&>em]:not-italic [&>em]:px-1 [&>em]:rounded-sm [&>em]:font-bold"
-            dangerouslySetInnerHTML={{ __html: content }} 
+            className="text-slate-600 [&>strong]:bg-yellow-200 [&>strong]:text-orange-900 [&>strong]:font-bold [&>strong]:px-1 [&>strong]:rounded-sm"
+            dangerouslySetInnerHTML={{ __html: cleanContent }} 
         />
     );
 };
 
+// --- COMPONENT: DOCUMENT VIEWER MODAL ---
+const FileViewerModal = ({ file, onClose }: { file: SearchResult | null, onClose: () => void }) => {
+  if (!file) return null;
+
+  return (
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      className="fixed inset-0 z-[1000] flex items-center justify-center bg-slate-900/70 backdrop-blur-md p-4 sm:p-6"
+      onClick={onClose}
+    >
+      <motion.div
+        initial={{ scale: 0.9, opacity: 0, y: 40 }}
+        animate={{ scale: 1, opacity: 1, y: 0 }}
+        exit={{ scale: 0.9, opacity: 0, y: 40 }}
+        transition={{ type: "spring", damping: 25, stiffness: 300 }}
+        onClick={(e) => e.stopPropagation()} // Prevent closing when clicking inside content
+        className="relative w-full max-w-5xl h-[85vh] bg-white rounded-3xl shadow-2xl flex flex-col overflow-hidden border border-white/20"
+      >
+        {/* Header */}
+        <div className="flex items-center justify-between px-6 py-4 bg-slate-50 border-b border-slate-100 shrink-0">
+          <div className="flex items-center gap-4 overflow-hidden">
+            <div className="h-10 w-10 shrink-0 bg-orange-100 rounded-xl flex items-center justify-center text-orange-600">
+               {file.docType === "Folder" ? <FolderOpen className="h-5 w-5" /> : <FileText className="h-5 w-5" />}
+            </div>
+            <div className="min-w-0">
+              <h3 className="text-lg font-bold text-slate-800 truncate">{file.fileName}</h3>
+              <p className="text-sm text-slate-500 flex items-center gap-2 truncate">
+                 <FolderOpen className="w-3 h-3" /> {file.folderName}
+                 <span className="text-slate-300">|</span>
+                 <Badge variant="outline" className="text-[10px] h-5 px-1.5">{file.docType}</Badge>
+              </p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2 shrink-0 ml-2">
+             <Button variant="ghost" size="icon" className="text-slate-400 hover:text-slate-600 hidden sm:flex">
+                <Download className="w-5 h-5" />
+             </Button>
+             <Button variant="ghost" size="icon" className="text-slate-400 hover:text-slate-600 hidden sm:flex">
+                <Maximize2 className="w-5 h-5" />
+             </Button>
+             <div className="w-px h-6 bg-slate-200 mx-1 hidden sm:block"></div>
+             <Button 
+                variant="ghost" 
+                size="icon" 
+                onClick={onClose} 
+                className="text-slate-500 hover:text-white hover:bg-red-500 rounded-full transition-colors w-10 h-10"
+             >
+                <X className="w-6 h-6" />
+             </Button>
+          </div>
+        </div>
+
+        {/* Content Area (Scrollable) */}
+        <div className="flex-1 bg-slate-100/50 p-4 sm:p-8 overflow-y-auto">
+             <div className="max-w-3xl mx-auto bg-white min-h-[800px] shadow-sm border border-slate-200 rounded-lg p-6 sm:p-10 relative">
+                
+                {/* Simulated Document Header */}
+                <div className="mb-8 pb-6 border-b border-slate-100">
+                    <h1 className="text-2xl sm:text-3xl font-serif text-slate-900 mb-2 break-words">{file.fileName.replace(/\.[^/.]+$/, "")}</h1>
+                    <div className="text-slate-400 text-sm font-mono">Document ID: {file.id}</div>
+                </div>
+
+                {/* Simulated Content with Highlights */}
+                <div className="space-y-6">
+                    <div className="p-6 bg-orange-50/50 border border-orange-100 rounded-xl mb-8">
+                        <h4 className="text-sm font-bold text-orange-800 mb-2 uppercase tracking-wider flex items-center gap-2">
+                            <Flame className="w-4 h-4" /> AI Highlighted Context
+                        </h4>
+                        <p className="text-slate-700 leading-relaxed text-lg font-medium">
+                           "... <HighlightedText content={file.snippet} /> ..."
+                        </p>
+                    </div>
+
+                    {/* Placeholder Text for "Whole Document" feel */}
+                    <div className="space-y-4 text-slate-300 select-none blur-[1px] opacity-70">
+                         <p className="w-full h-4 bg-slate-200 rounded"></p>
+                         <p className="w-[90%] h-4 bg-slate-200 rounded"></p>
+                         <p className="w-[95%] h-4 bg-slate-200 rounded"></p>
+                         <div className="flex flex-col sm:flex-row gap-4 my-6">
+                            <div className="w-full sm:w-1/2 h-40 bg-slate-200 rounded"></div>
+                            <div className="w-full sm:w-1/2 h-40 bg-slate-200 rounded"></div>
+                         </div>
+                         <p className="w-full h-4 bg-slate-200 rounded"></p>
+                         <p className="w-[85%] h-4 bg-slate-200 rounded"></p>
+                         <p className="w-[92%] h-4 bg-slate-200 rounded"></p>
+                    </div>
+                    
+                    <div className="flex justify-center mt-12 pb-8">
+                        <Button variant="outline" className="gap-2 border-orange-200 text-orange-700 hover:bg-orange-50 hover:text-orange-800">
+                            <FileText className="w-4 h-4" /> Load Full Document Content
+                        </Button>
+                    </div>
+                </div>
+             </div>
+        </div>
+      </motion.div>
+    </motion.div>
+  );
+};
+
+// --- INTERFACES MATCHING API RESPONSE ---
 interface ApiLocation {
     type: string;
-    description: string;
+    description: string; // e.g., "Found on Page 1"
     snippet: string;
-    pageNumber?: number;
-    lineNumber?: number;
 }
 
 interface SearchResult {
   id: string;
   fileName: string;
   folderName: string;
-  docType: "File" | "Folder" | string;
+  docType: "File" | "Folder" | "OcrRecord" | string;
   snippet: string; // HTML string with highlights
-  pageNumber: number | null;
-  lineNumber: number | null;
+  locationLabel: string | null; // e.g. "Page 1" or "Line 55"
   matchCount: number;    
   relevanceScore: number; 
   matchType: string; // e.g. "metadata", "content"
@@ -120,6 +223,9 @@ export default function FileManagement() {
   const [hasSearched, setHasSearched] = useState(false);
   const [searchDuration, setSearchDuration] = useState(0); 
   
+  // --- NEW STATE: Selected file for viewer ---
+  const [selectedFile, setSelectedFile] = useState<SearchResult | null>(null);
+
   const abortControllerRef = useRef<AbortController | null>(null);
 
   // --- HANDLER ---
@@ -144,32 +250,42 @@ export default function FileManagement() {
             signal: controller.signal
         });
 
-        // 1. Traverse to the correct results array based on provided JSON structure
-        // structure: response.data.results.results
+        // The API returns nested results structure: { results: { results: [...] } }
         let apiResults = [];
         if (response.data && response.data.results && Array.isArray(response.data.results.results)) {
             apiResults = response.data.results.results;
         } else if (Array.isArray(response.data)) {
-            apiResults = response.data;
+            apiResults = response.data; // Fallback for standard arrays
         }
 
         const mappedResults: SearchResult[] = apiResults.map((item: any) => {
+            const locations = item.locations || [];
+            
             // Determine the best location match to show in preview
-            const bestMatch: ApiLocation = item.locations && item.locations.length > 0 
-                ? item.locations[0] 
-                : { type: "name", description: "Match in Name", snippet: item.fileName };
+            // If locations exist, pick the first one; otherwise create a dummy one
+            const bestMatch: ApiLocation = locations.length > 0 
+                ? locations[0] 
+                : { type: "name", description: "Metadata Match", snippet: item.fileName };
+
+            // Extract displayable location label from description (e.g. "Found on Page 1" -> "Page 1")
+            // This is robust: if API returns "Found on Line 2", it shows "Line 2".
+            const locationLabel = bestMatch.description 
+                ? bestMatch.description.replace(/^Found on\s+/i, "").trim() 
+                : null;
+
+            // Calculate a mock relevance score since the API doesn't provide one directly
+            // Base score 75, add 5 per match, cap at 98.
+            const calculatedScore = Math.min(75 + (locations.length * 5), 98);
 
             return {
                 id: item.id,
                 fileName: item.fileName || "Unknown",
                 folderName: item.folderName || "Root",
                 docType: item.docType || "File",
-                snippet: bestMatch.snippet || item.fileName, // The highlighted HTML or plain text
-                pageNumber: bestMatch.pageNumber || null,
-                lineNumber: bestMatch.lineNumber || null,
-                matchCount: item.locations ? item.locations.length : 1,
-                // If score isn't provided, calculate a mock 'relevance' based on match count or default to high for direct hits
-                relevanceScore: item.score ? Math.round(item.score) : 85, 
+                snippet: bestMatch.snippet || item.fileName,
+                locationLabel: locationLabel,
+                matchCount: locations.length > 0 ? locations.length : 1,
+                relevanceScore: calculatedScore, 
                 matchType: bestMatch.type
             };
         });
@@ -251,6 +367,16 @@ export default function FileManagement() {
   return (
     <div className="flex flex-col min-h-screen bg-[#FFF8F0] font-sans text-slate-900 overflow-x-hidden selection:bg-orange-200 selection:text-orange-900">
       
+      {/* --- MODAL FOR DOC VIEWING --- */}
+      <AnimatePresence>
+         {selectedFile && (
+            <FileViewerModal 
+                file={selectedFile} 
+                onClose={() => setSelectedFile(null)} 
+            />
+         )}
+      </AnimatePresence>
+
       {/* --- BACKGROUND EFFECTS --- */}
       <div className="fixed inset-0 z-0 pointer-events-none overflow-hidden">
         <motion.div 
@@ -310,8 +436,8 @@ export default function FileManagement() {
                     <Input 
                         value={searchQuery}
                         onChange={(e) => setSearchQuery(e.target.value)}
-                        className="w-full pl-4 pr-4 py-8 text-lg bg-transparent border-none focus-visible:ring-0 placeholder:text-slate-400 text-slate-800 font-medium"
-                        placeholder="Type keywords (e.g. 'Confidential', 'Invoice')..."
+                        className="w-full pl-4 pr-4 py-8 text-lg bg-transparent border-none focus-visible:ring-0 focus-visible:ring-offset-0 shadow-none outline-none placeholder:text-slate-400 text-slate-800 font-medium"
+                        placeholder="Type keywords (e.g. 'Confidential', 'Criminal')..."
                     />
                     <Button 
                         type="submit" 
@@ -517,6 +643,7 @@ export default function FileManagement() {
                             {searchResults.map((result, idx) => (
                                 <GlassCard 
                                     key={idx} 
+                                    onClick={() => setSelectedFile(result)} // Opens Modal
                                     className="p-0 group cursor-pointer border-l-[6px] border-l-transparent hover:border-l-orange-500"
                                 >
                                     <div className="p-6">
@@ -527,8 +654,10 @@ export default function FileManagement() {
                                                     {result.docType === "Folder" ? <FolderOpen className="h-6 w-6" /> : <FileText className="h-6 w-6" />}
                                                 </div>
                                                 <div className="w-full">
-                                                    <h4 className="text-lg font-bold text-slate-800 line-clamp-1 group-hover:text-orange-600 transition-colors">
+                                                    <h4 className="text-lg font-bold text-slate-800 line-clamp-1 group-hover:text-orange-600 transition-colors flex items-center gap-2">
                                                         {result.fileName}
+                                                        {/* Visual hint for clicking */}
+                                                        <Eye className="w-4 h-4 text-slate-300 opacity-0 group-hover:opacity-100 transition-opacity" />
                                                     </h4>
                                                     <div className="flex items-center flex-wrap gap-2 mt-2">
                                                         <Badge variant="outline" className={cn("text-xs font-bold", getDensityColor(result.relevanceScore))}>
@@ -537,13 +666,11 @@ export default function FileManagement() {
                                                         </Badge>
                                                         <span className="text-xs text-slate-400 font-medium">| {result.folderName}</span>
                                                         
-                                                        {/* LOCATION CONTEXT BADGE */}
-                                                        {(result.pageNumber || result.lineNumber) && (
+                                                        {/* LOCATION CONTEXT BADGE (Dynamic based on API Description) */}
+                                                        {result.locationLabel && (
                                                             <Badge variant="secondary" className="bg-slate-100 text-slate-600 text-xs border border-slate-200">
                                                                 <MapPin className="w-3 h-3 mr-1" />
-                                                                {result.pageNumber && `Pg ${result.pageNumber}`}
-                                                                {result.pageNumber && result.lineNumber && `, `}
-                                                                {result.lineNumber && `Ln ${result.lineNumber}`}
+                                                                {result.locationLabel}
                                                             </Badge>
                                                         )}
                                                     </div>
