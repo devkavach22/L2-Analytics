@@ -2,6 +2,11 @@ import mongoose from "mongoose";
 
 const linkSchema = new mongoose.Schema(
   {
+    folderId:{
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Folder",
+      required: true
+    },
     userId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",

@@ -16,8 +16,8 @@ from langchain_huggingface import ChatHuggingFace, HuggingFaceEndpoint
 from langchain_core.prompts import PromptTemplate
 from langchain_core.output_parsers import StrOutputParser
 
-# ---------------- NEW IMPORT (REQUESTED) ----------------
-from langchain.chains import RetrievalQA
+# ---------------- NEW (SAFE) IMPORT ----------------
+from langchain.callbacks.base import BaseCallbackHandler
 
 # ---------------- REPORT GENERATION IMPORTS ----------------
 try:
@@ -26,9 +26,9 @@ except ImportError:
     try:
         from report_generator import render_html_report
     except ImportError:
-        print("Warning: report_generator module not found. PDF generation may fail.")
+        print("Warning: report_generator module not found.")
         def render_html_report(data, report_type, user_id):
-            return f"Error: PDF Generator not available. Content: {data.get('title')}"
+            return f"PDF generator missing. Content: {data.get('title')}"
 
 # ---------------- OPENAI IMPORTS (OPTIONAL) ----------------
 try:
@@ -39,27 +39,16 @@ except ImportError:
 
 load_dotenv()
 
-# Define Paths for RAG as well
-REPORTS_DIR = os.path.join(os.getcwd(), "static", "reports")
-REPORTS_URL_PREFIX = "/static/reports/"
-
-if not os.path.exists(REPORTS_DIR):
-    os.makedirs(REPORTS_DIR, exist_ok=True)
-
 # =========================================================
-# 1. CONFIGURATION
+# CONFIGURATION (UNCHANGED)
 # =========================================================
-
-# Database Config
 MONGO_URL = os.getenv("MONGO_URL")
 DB_NAME = os.getenv("MONGO_DB_NAME")
 COLLECTION_NAME = "vector_store"
 INDEX_NAME = "universal_index"
 
-# OpenAI Configuration (Optional)
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
-# Hugging Face / Model Config
 HUGGINGFACE_API_TOKEN = os.getenv("HUGGINGFACE_API_TOKEN")
 HUGGINGFACE_LLM_MODEL = os.getenv(
     "HUGGINGFACE_LLM_MODEL",
@@ -70,30 +59,22 @@ HUGGINGFACE_EMBEDDING_MODEL = os.getenv(
     "sentence-transformers/all-MiniLM-L6-v2"
 )
 
-# Text Splitting Configuration
 CHUNK_SIZE = int(os.getenv("CHUNK_SIZE", 500))
 CHUNK_OVERLAP = int(os.getenv("CHUNK_OVERLAP", 100))
-
-# RAG & LLM Generation Configuration
 RETRIEVAL_K = int(os.getenv("RETRIEVAL_K", 4))
 LLM_TEMPERATURE = float(os.getenv("LLM_TEMPERATURE", 0.4))
-LLM_MAX_NEW_TOKENS = int(os.getenv("LLM_MAX_NEW_TOKENS", 512)) # Increased for detailed reports
+LLM_MAX_NEW_TOKENS = int(os.getenv("LLM_MAX_NEW_TOKENS", 512))
 
-# Initialize Mongo Client
 client = MongoClient(MONGO_URL)
 db = client[DB_NAME]
 vector_collection = db[COLLECTION_NAME]
 
 # =========================================================
-# 2. EMBEDDINGS & VECTOR STORE
+# EMBEDDINGS & VECTOR STORE (UNCHANGED)
 # =========================================================
-
 def _get_embedding_model():
     if OPENAI_API_KEY and OpenAIEmbeddings:
-        print("🔹 Using OpenAI Embeddings")
         return OpenAIEmbeddings(openai_api_key=OPENAI_API_KEY)
-    
-    print(f"🔹 Using Hugging Face Embeddings: {HUGGINGFACE_EMBEDDING_MODEL}")
     return HuggingFaceEmbeddings(model_name=HUGGINGFACE_EMBEDDING_MODEL)
 
 embedding_model = _get_embedding_model()
@@ -107,26 +88,99 @@ def get_vector_store():
     )
 
 # =========================================================
-# 3. LLM INITIALIZATION
+# LLM INITIALIZATION (EXTENDED FOR STREAMING)
 # =========================================================
-def _initialize_llm():
+def _initialize_llm(callbacks=None):
     if OPENAI_API_KEY and ChatOpenAI:
         return ChatOpenAI(
             openai_api_key=OPENAI_API_KEY,
             model_name="gpt-4o-mini",
-            temperature=LLM_TEMPERATURE
+            temperature=LLM_TEMPERATURE,
+            streaming=bool(callbacks),
+            callbacks=callbacks
         )
-
-    if not HUGGINGFACE_API_TOKEN:
-        raise ValueError("Neither OPENAI_API_KEY nor HUGGINGFACE_API_TOKEN found.")
 
     endpoint = HuggingFaceEndpoint(
         repo_id=HUGGINGFACE_LLM_MODEL,
         huggingfacehub_api_token=HUGGINGFACE_API_TOKEN,
         temperature=LLM_TEMPERATURE,
         max_new_tokens=LLM_MAX_NEW_TOKENS,
+        streaming=bool(callbacks)
     )
-    return ChatHuggingFace(llm=endpoint)
+
+    return ChatHuggingFace(llm=endpoint, callbacks=callbacks)
+
+# =========================================================
+# INTERNAL RETRIEVAL (UNCHANGED)
+# =========================================================
+def _fetch_docs(query, user_id, source=None, k=RETRIEVAL_K, strict_source=True):
+    store = get_vector_store()
+    filter_query = {"user_id": {"$eq": user_id}}
+    if strict_source and source:
+        filter_query["source"] = {"$eq": source}
+    return store.similarity_search(query, k=k, pre_filter=filter_query)
+
+# =========================================================
+# 🔥 NEW: STREAMING CALLBACK
+# =========================================================
+class StreamingCallback(BaseCallbackHandler):
+    def __init__(self, on_token):
+        self.on_token = on_token
+
+    def on_llm_new_token(self, token: str, **kwargs):
+        if self.on_token:
+            self.on_token(token)
+
+# =========================================================
+# 🔥 NEW: LONG-FORM GENERATION (USED BY main.py)
+# =========================================================
+def generate_long_form_answer(
+    query: str,
+    user_id: str,
+    stream_callback=None,
+    k: int = RETRIEVAL_K
+):
+    """
+    Streaming-friendly RAG generation for reports / canvas UI.
+    """
+    docs = _fetch_docs(
+        query=query,
+        user_id=user_id,
+        source=None,
+        k=k,
+        strict_source=False
+    )
+
+    if not docs:
+        return "No relevant information found."
+
+    context = "\n\n".join(d.page_content for d in docs)
+
+    callbacks = []
+    if stream_callback:
+        callbacks.append(StreamingCallback(stream_callback))
+
+    llm = _initialize_llm(callbacks=callbacks)
+
+    prompt = PromptTemplate(
+        template="""
+You are a professional report writer.
+
+Write a structured, factual report using ONLY the context.
+
+Context:
+{context}
+
+Topic:
+{question}
+
+Report:
+""",
+        input_variables=["context", "question"]
+    )
+
+    chain = prompt | llm | StrOutputParser()
+    return chain.invoke({"context": context, "question": query})
 
 # =========================================================
 # 4. STORAGE

@@ -183,7 +183,12 @@ router.get("/files/:folderId", auth, async (req, res) => {
             userId: req.user.id,
         });
 
-        res.json({ files });
+        const links = await Link.find({
+            folderId: req.params.folderId,
+            userId: req.user.id,
+        });
+
+        res.json({ files, links });
     } catch (error) {
         res.status(500).json({ error: error.message });
     }
@@ -247,7 +252,7 @@ router.get("/files/:folderId", auth, async (req, res) => {
 
 router.post("/link/add", auth, async (req, res) => {
     try {
-        const { url } = req.body;
+        const { url, folderId } = req.body;
         const userId = String(req.user.id);
 
         if (!url) return res.status(400).json({ error: "URL is required." });
@@ -258,6 +263,7 @@ router.post("/link/add", auth, async (req, res) => {
         // We save it immediately so the user sees "Processing..." in the UI
         let newLink = await Link.create({
             userId,
+            folderId: folderId || null,
             url,
             extractedText: "", // Will be filled if Python returns a summary, or left empty for RAG
             status: "processing"
@@ -297,9 +303,9 @@ router.post("/link/add", auth, async (req, res) => {
         console.error("❌ Error processing link:", error.message);
         
         // Update status to failed if the link was created
-        if (req.body.url && req.user) {
+        if (req.body.url && req.user && req.folder) {
              await Link.findOneAndUpdate(
-                { url: req.body.url, userId: req.user.id },
+                { url: req.body.url, userId: req.user.id, folderId: req.folderId },
                 { status: "failed" }
             );
         }

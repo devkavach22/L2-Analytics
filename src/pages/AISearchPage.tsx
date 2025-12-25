@@ -12,7 +12,7 @@ import {
   FileExcelOutlined, FileImageOutlined, CloseCircleFilled, 
   WarningFilled, LoadingOutlined 
 } from "@ant-design/icons";
-import { Sparkles, Layers, FileOutput, Bot, Zap, Search, Cpu, Terminal, MessageSquare } from "lucide-react";
+import { Sparkles, Layers, FileOutput, Bot, Zap, Search, Cpu, Terminal, MessageSquare, Edit3 } from "lucide-react";
 import { clsx, type ClassValue } from "clsx";
 import { twMerge } from "tailwind-merge";
 
@@ -28,6 +28,10 @@ import {
   MessageSeparator,
   Avatar
 } from "@chatscope/chat-ui-kit-react";
+
+// --- TIPTAP IMPORTS ---
+import { useEditor, EditorContent } from '@tiptap/react'
+import StarterKit from '@tiptap/starter-kit'
 
 import Instance from "@/lib/axiosInstance"; 
 import { Header } from "@/components/Header";
@@ -136,78 +140,76 @@ const SpotlightSection = ({ children, className = "" }: { children: React.ReactN
   );
 };
 
-// --- UPDATED TYPEWRITER COMPONENT (FIXED CURSOR & STREAMING) ---
-const TypewriterLog = ({ logs }: { logs: string[] }) => {
-  const [displayedLines, setDisplayedLines] = useState<string[]>([]);
-  const [currentLineIndex, setCurrentLineIndex] = useState(0);
+// --- TIPTAP EDITOR STREAM COMPONENT ---
+const TiptapStreamLog = ({ logs, isGenerating }: { logs: string[], isGenerating: boolean }) => {
+  const [currentLogIndex, setCurrentLogIndex] = useState(0);
   const [currentCharIndex, setCurrentCharIndex] = useState(0);
-  const scrollRef = useRef<HTMLDivElement>(null);
   
-  // Speed of typing (ms per char)
-  const TYPING_SPEED = 20;
+  const editor = useEditor({
+    extensions: [StarterKit],
+    content: '', 
+    editable: !isGenerating, 
+    editorProps: {
+      attributes: {
+        class: 'prose prose-sm sm:prose-base lg:prose-lg xl:prose-xl focus:outline-none text-slate-300 max-w-none h-full',
+      },
+    },
+  });
 
   useEffect(() => {
-    // Reset if logs are cleared or changed significantly
-    if (logs.length === 0) {
-      setDisplayedLines([]);
-      setCurrentLineIndex(0);
-      setCurrentCharIndex(0);
-      return;
-    }
-  }, [logs]);
+    if (!editor || logs.length === 0) return;
+    if (currentLogIndex >= logs.length) return; 
 
-  useEffect(() => {
-    if (currentLineIndex >= logs.length) return;
+    const targetLine = logs[currentLogIndex];
 
-    const targetLine = logs[currentLineIndex];
-    
-    // If we haven't finished typing the current line
     if (currentCharIndex < targetLine.length) {
       const timeout = setTimeout(() => {
-        setDisplayedLines(prev => {
-          const newLines = [...prev];
-          // Ensure the array has enough elements
-          if (!newLines[currentLineIndex]) newLines[currentLineIndex] = "";
-          newLines[currentLineIndex] = targetLine.slice(0, currentCharIndex + 1);
-          return newLines;
-        });
+        const char = targetLine[currentCharIndex];
+        editor.chain().focus().insertContent(char).run(); 
         setCurrentCharIndex(prev => prev + 1);
-      }, TYPING_SPEED);
+      }, 15); 
       return () => clearTimeout(timeout);
     } else {
-      // Finished line, move to next
       const timeout = setTimeout(() => {
-        setCurrentLineIndex(prev => prev + 1);
+        editor.chain().focus().enter().run();
+        setCurrentLogIndex(prev => prev + 1);
         setCurrentCharIndex(0);
-      }, 300); // Small pause between lines
+      }, 300);
       return () => clearTimeout(timeout);
     }
-  }, [currentLineIndex, currentCharIndex, logs]);
+  }, [currentLogIndex, currentCharIndex, logs, editor]);
 
-  // Auto-scroll
   useEffect(() => {
-    if (scrollRef.current) {
-      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+    if(editor && logs.length === 0) {
+      editor.commands.clearContent();
+      setCurrentLogIndex(0);
+      setCurrentCharIndex(0);
     }
-  }, [displayedLines]);
+  }, [logs, editor]);
+
+  useEffect(() => {
+    if (editor) {
+      editor.commands.scrollIntoView(); 
+    }
+  }, [currentCharIndex, editor]);
 
   return (
-    <div ref={scrollRef} className="h-full overflow-y-auto px-6 py-4 space-y-3 font-mono text-xs md:text-sm text-slate-300 leading-relaxed custom-scrollbar">
-      {displayedLines.map((line, index) => (
-        <div key={index} className="flex items-start gap-3">
-          <span className="text-orange-500 mt-1">➜</span>
-          <span className="text-green-400/90 break-words whitespace-pre-wrap font-semibold tracking-wide">
-            {line}
-            {/* Show cursor only on the active line being typed */}
-            {index === currentLineIndex && index < logs.length && (
-              <span className="animate-pulse text-orange-500 ml-1">▍</span>
-            )}
-          </span>
-        </div>
-      ))}
-      {/* Show cursor at the end if waiting for more logs */}
-      {currentLineIndex >= logs.length && logs.length > 0 && (
-         <div className="pl-6 animate-pulse text-orange-500">▍</div>
+    <div className="h-full overflow-y-auto px-6 py-4 custom-scrollbar bg-[#0b1120] relative">
+      <style>{`
+        .ProseMirror p { margin-bottom: 0.5em; line-height: 1.6; }
+        .ProseMirror { min-height: 100%; outline: none; }
+        .ProseMirror-focused { outline: none; }
+        .ProseMirror .is-editor-empty:first-child::before {
+          content: attr(data-placeholder);
+          float: left;
+          color: #adb5bd;
+          pointer-events: none;
+          height: 0;
+        }
+      `}</style>
+      <EditorContent editor={editor} />
+      {isGenerating && (
+         <div className="inline-block w-2 h-4 bg-orange-500 animate-pulse ml-1 align-middle" />
       )}
     </div>
   );
@@ -313,7 +315,6 @@ export default function AISearch() {
             if (jobData.fileId) setSelectedFileId(jobData.fileId);
             if (jobData.reportType) setReportType(jobData.reportType);
             
-            // Reconstruct target name for logs
             let targetName = jobData.topic;
             if (jobData.inputType === 'file' && workspaceFiles.length > 0) {
                 const f = workspaceFiles.find(file => file.id === jobData.fileId);
@@ -324,7 +325,6 @@ export default function AISearch() {
             setIsGenerating(true);
             setShowChatInterface(false);
             
-            // Resume contextual logs
             startSimulation(jobData.reportType, targetName || "Unknown Target");
             startPollingForCompletion(jobData);
             
@@ -368,7 +368,11 @@ export default function AISearch() {
 
       const rawFolders = foldersRes.data.folders || foldersRes.data || [];
       const rawFiles = filesRes.data.files || filesRes.data || [];
-      const myFolders = rawFolders.filter((f: any) => (f.userId || f.user) === uid);
+      const myFolders = rawFolders.map((f: any) => ({
+             id: f._id || f.id, 
+             name: f.name, 
+             userId: f.userId || f.user
+      })).filter((f: any) => (f.userId || f.user) === uid);
 
       const transformedFiles = rawFiles.map((f: any) => {
           let folderId = f.folderId || f.folder;
@@ -434,8 +438,6 @@ export default function AISearch() {
 
              if (foundReport) {
                  clearInterval(pollingInterval.current as NodeJS.Timeout);
-                 
-                 // Append final success log
                  setConsoleLogs(prev => [...prev, "Report generation complete.", "Initializing secure download pipeline..."]);
                  
                  setTimeout(() => {
@@ -458,7 +460,7 @@ export default function AISearch() {
       }, 3000); 
   };
 
-  // --- CONTEXT-AWARE LOG GENERATOR (Backend Simulation) ---
+  // --- CONTEXT-AWARE AGENT LOGS ---
   const getAgentLogs = (type: string, target: string) => {
       const targetName = target ? `"${target}"` : "Target Entity";
       
@@ -467,9 +469,8 @@ export default function AISearch() {
               `[SEC-OPS] Initializing vulnerability scan for ${targetName}...`,
               `[NET-ANALYZER] Pinging associated IP ranges...`,
               `[FIREWALL] Retrieving access logs from last 30 days...`,
-              `[CVE-DB] Checking against known exploit signatures (CVE-2024-X)...`,
+              `[CVE-DB] Checking against known exploit signatures...`,
               `[THREAT-INTEL] Cross-referencing dark web leak databases...`,
-              `[ANOMALY-DETECTION] Flagging irregular packet bursts...`,
               `[RISK-SCORE] Calculating aggregate security posture...`,
               `[REPORT-GEN] Compiling threat assessment matrix...`
           ],
@@ -479,7 +480,6 @@ export default function AISearch() {
               `[ASSOCIATES] Mapping social graph connections...`,
               `[LOCATION-INTEL] Triangulating historical movement patterns...`,
               `[FIN-CRIME] Checking flagged bank accounts...`,
-              `[OSINT] Scraping public social media footprints...`,
               `[SENTIMENT] Analyzing behavioral psychology markers...`,
               `[DOSSIER] Encrypting final profile document...`
           ],
@@ -488,8 +488,6 @@ export default function AISearch() {
               `[OCR-ENGINE] Parsing balance sheets and ledger entries...`,
               `[FRAUD-DETECT] Running Benford's Law analysis on transactions...`,
               `[LIQUIDITY] Calculating current ratio and cash flow...`,
-              `[COMPLIANCE] Verifying tax filing status...`,
-              `[FORECAST] Projecting Q3/Q4 financial trajectory...`,
               `[SUMMARY] Drafting executive financial summary...`
           ],
           "FIR & Case Analysis": [
@@ -503,14 +501,12 @@ export default function AISearch() {
           ]
       };
 
-      // Fallback for generic types
       const DEFAULT_STEPS = [
           `[SYSTEM] Initializing Intelligence Core...`,
           `[AUTH] Verifying access permissions for ${targetName}...`,
           `[DATA-LAKE] Establishing secure connection...`,
           `[NLP] Parsing input context and metadata...`,
           `[ANALYSIS] Running sentiment and entity extraction...`,
-          `[DB-LOOKUP] Cross-referencing internal records...`,
           `[SYNTHESIS] Aggregating insights into natural language...`,
           `[FORMAT] Finalizing document structure...`
       ];
@@ -522,13 +518,9 @@ export default function AISearch() {
     const logs = getAgentLogs(type, target);
     setConsoleLogs([]); 
     
-    // We add logs one by one to the state, 
-    // The TypewriterLog component handles the character-by-character typing.
     let logIndex = 0;
-
     if (progressInterval.current) clearInterval(progressInterval.current);
     
-    // Add a new log line every ~2.5 seconds (gives time for typing animation)
     progressInterval.current = setInterval(() => {
         if (logIndex < logs.length) {
             setConsoleLogs(prev => [...prev, logs[logIndex]]);
@@ -543,18 +535,15 @@ export default function AISearch() {
     if (inputType === "keyword" && !topic.trim()) return message.error("Please enter a topic.");
     if (inputType === "file" && !selectedFileId) return message.error("Please select a file from your workspace.");
 
-    // Determine target name for logs
     let targetName = topic;
     if (inputType === 'file') {
         const f = workspaceFiles.find(file => file.id === selectedFileId);
         targetName = f ? f.name : "Selected File";
     }
 
-    // 1. Reset UI to Log Mode
     setIsGenerating(true);
     setShowChatInterface(false);
     
-    // 2. Start Context-Aware Backend Logs
     startSimulation(reportType, targetName);
 
     const jobState = { inputType, topic, fileId: selectedFileId, reportType, startTime: Date.now() };
@@ -571,8 +560,6 @@ export default function AISearch() {
         });
 
         clearInterval(progressInterval.current as NodeJS.Timeout);
-        
-        // Don't finish immediately, let the user see the "Complete" log
         setConsoleLogs(prev => [...prev, "Server response received. Finalizing..."]);
 
         const result = response.data.data || response.data; 
@@ -617,11 +604,9 @@ export default function AISearch() {
       setCurrentReport(newReport);
       localStorage.setItem(NOTIFICATION_KEY, JSON.stringify(newReport));
 
-      // 2. SWITCH TO CHAT MODE
       setIsGenerating(false);
       setShowChatInterface(true);
       
-      // Initialize Chat with Context
       setChatMessages([
           {
               message: `Analysis complete. I have generated the **${reportData.type || reportType}**. You can ask me specific questions about the findings below.`,
@@ -638,34 +623,62 @@ export default function AISearch() {
       fetchWorkspaceFiles();
   };
 
-  // --- CHAT INTERACTION (Q&A) ---
+  // --- UPDATED CHAT HANDLER (WITH API INTEGRATION) ---
+  const handleUserChat = async (text: string) => {
+      if(!text.trim()) return;
+      
+      // 1. UI: Add User Message
+      const userMsg = {
+          message: text,
+          sender: "User",
+          direction: "outgoing",
+          position: "single"
+      };
+      setChatMessages(prev => [...prev, userMsg]);
+      setIsTyping(true);
+
+      try {
+          // 2. API Call to Backend
+          // Passes question and link (context) to the backend route provided
+          const payload = {
+              question: text,
+              link: currentReport?.downloadUrl || "" 
+          };
+
+          const response = await Instance.post("/auth/chat/ask", payload);
+
+          // 3. UI: Add AI Reply
+          const replyText = response.data.answer || "No response generated.";
+
+          const aiMsg = {
+              message: replyText,
+              sender: "AI_Agent",
+              direction: "incoming",
+              position: "single"
+          };
+          setChatMessages(prev => [...prev, aiMsg]);
+
+      } catch (error) {
+          console.error("Chat Error:", error);
+          const errorMsg = {
+              message: "Connection error. Unable to reach intelligence core.",
+              sender: "System",
+              direction: "incoming",
+              position: "single"
+          };
+          setChatMessages(prev => [...prev, errorMsg]);
+      } finally {
+          setIsTyping(false);
+      }
+  };
+
+  // --- OTHER HANDLERS ---
   const handleChatScroll = useCallback(async () => {
     setHistoryLoading(true);
     setTimeout(() => {
         setHistoryLoading(false);
     }, 1000);
   }, []);
-
-  const handleUserChat = (text: string) => {
-      if(!text.trim()) return;
-      setChatMessages(prev => [...prev, {
-          message: text,
-          sender: "User",
-          direction: "outgoing",
-          position: "single"
-      }]);
-      setIsTyping(true);
-
-      setTimeout(() => {
-          setChatMessages(prev => [...prev, {
-              message: "Based on the generated report, the key entities identified show a 85% correlation with known risk vectors. The financial section highlights three irregular transaction patterns.",
-              sender: "AI_Agent",
-              direction: "incoming",
-              position: "single"
-          }]);
-          setIsTyping(false);
-      }, 2000);
-  };
 
   const downloadReport = (report: any) => {
     if (report.status !== "Ready") return message.error("Cannot download failed reports.");
@@ -681,26 +694,22 @@ export default function AISearch() {
       return <FileTextOutlined className="text-slate-400" />;
   };
 
-  const getSuccessColor = (rate: number) => {
+  const successColors = getSuccessColor(stats.successRate);
+  const paginatedReports = reports.slice((currentPage - 1) * pageSize, currentPage * pageSize);
+
+  function getSuccessColor(rate: number) {
       if (rate >= 90) return { stroke: "#22c55e", text: "text-green-500" }; 
       if (rate >= 50) return { stroke: "#f97316", text: "text-orange-500" }; 
       return { stroke: "#ef4444", text: "text-red-500" }; 
-  };
-
-  const successColors = getSuccessColor(stats.successRate);
-
-  const paginatedReports = reports.slice((currentPage - 1) * pageSize, currentPage * pageSize);
+  }
 
   return (
     <div className="min-h-screen bg-[#FFFBF6] text-slate-900 font-sans flex flex-col relative overflow-x-hidden selection:bg-orange-100 selection:text-orange-900">
-      
-      {/* Visual Layers */}
       <NeuralBackground />
       <div className="fixed inset-0 bg-[url('https://grainy-gradients.vercel.app/noise.svg')] opacity-25 mix-blend-soft-light pointer-events-none z-0" />
       <div className="fixed -top-40 -right-40 w-[600px] h-[600px] bg-gradient-to-br from-orange-200/20 to-rose-200/20 rounded-full blur-[100px] z-0" />
       <div className="fixed -bottom-40 -left-40 w-[600px] h-[600px] bg-gradient-to-tr from-amber-200/20 to-yellow-100/20 rounded-full blur-[100px] z-0" />
 
-      {/* Override Chatscope Styles for Dark Theme */}
       <style>{`
         .cs-chat-container { background-color: transparent !important; }
         .cs-message-list { background-color: transparent !important; }
@@ -715,7 +724,6 @@ export default function AISearch() {
         <Header isAuthenticated={true} />
       </div>
 
-      {/* SUCCESS MODAL */}
       <Modal
         open={showSuccessModal}
         footer={null}
@@ -747,8 +755,6 @@ export default function AISearch() {
       </Modal>
 
       <main className="relative z-10 flex-grow container mx-auto px-4 pt-32 pb-24 max-w-7xl">
-        
-        {/* --- HEADER --- */}
         <motion.div initial={{ opacity: 0, y: 15 }} animate={{ opacity: 1, y: 0 }} className="mb-12 flex flex-col md:flex-row justify-between items-end">
           <div>
             <div className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-white/60 border border-white shadow-sm backdrop-blur-md text-slate-600 text-xs font-bold uppercase tracking-widest mb-4">
@@ -759,7 +765,6 @@ export default function AISearch() {
             </h1>
           </div>
           
-          {/* UPDATED KPI SECTION WITH SUCCESS RATE */}
           <div className="flex items-center gap-6 bg-white/40 p-3 rounded-2xl border border-white/50 backdrop-blur-sm mt-6 md:mt-0 shadow-sm">
              <div className="px-3">
                 <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Reports Generated</div>
@@ -778,14 +783,12 @@ export default function AISearch() {
           </div>
         </motion.div>
 
-        {/* --- MAIN INTERFACE --- */}
         <div className="mb-16 relative z-20">
           <SpotlightSection className="rounded-[2.5rem] shadow-2xl shadow-orange-900/5">
              <GlowCard className="border-0 shadow-none bg-white/80 backdrop-blur-2xl"> 
                <div className="p-2 md:p-10">
                   <div className="grid grid-cols-1 xl:grid-cols-12 gap-10">
                     
-                    {/* LEFT: CONFIGURATION */}
                     <div className="xl:col-span-8 space-y-8">
                        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
                           <div className="flex items-center gap-4">
@@ -814,18 +817,10 @@ export default function AISearch() {
                        <div className="space-y-6 bg-slate-50/60 p-8 rounded-3xl border border-slate-100">
                           <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
                             <div className="md:col-span-2 space-y-3">
-                              <div className="flex justify-between items-center">
-                                <label className="text-xs font-bold text-slate-500 uppercase tracking-wider flex items-center gap-2">
-                                  {inputType === "keyword" ? <Layers size={14}/> : <FolderOpenOutlined />}
-                                  {inputType === "keyword" ? "Target Entity" : "Select Source File"}
-                                </label>
-                                {inputType === "file" && (
-                                   <button onClick={handleRefreshFiles} className="text-[10px] font-bold bg-white px-2 py-1 rounded border border-slate-200 text-slate-500 hover:text-orange-600 hover:border-orange-200 transition-colors flex items-center gap-1">
-                                     <ReloadOutlined spin={isLoadingFiles} /> SYNC
-                                   </button>
-                                )}
-                              </div>
-
+                              <label className="text-xs font-bold text-slate-500 uppercase tracking-wider flex items-center gap-2">
+                                {inputType === "keyword" ? <Layers size={14}/> : <FolderOpenOutlined />}
+                                {inputType === "keyword" ? "Target Entity" : "Select Source File"}
+                              </label>
                               {inputType === "keyword" ? (
                                 <Input size="large" placeholder="Type a company, topic, or keyword..." value={topic} onChange={(e) => setTopic(e.target.value)} disabled={isGenerating} className="h-14 rounded-xl font-medium" />
                               ) : (
@@ -879,10 +874,7 @@ export default function AISearch() {
                        </div>
                     </div>
 
-                    {/* RIGHT: DUAL CONSOLE LAYOUT */}
                     <div className="xl:col-span-4 flex flex-col gap-6 h-full min-h-[600px]">
-                        
-                        {/* 1. TOP: SYSTEM MONITOR */}
                         <div className="bg-[#0f172a] rounded-[2rem] p-6 relative overflow-hidden shadow-xl border border-slate-800 flex items-center justify-between h-[140px]">
                              <div className="relative z-10">
                                 <h3 className="text-slate-400 text-xs font-bold uppercase tracking-widest mb-1">System Status</h3>
@@ -902,9 +894,7 @@ export default function AISearch() {
                              <div className="absolute inset-0 opacity-20 bg-[linear-gradient(to_right,#334155_1px,transparent_1px),linear-gradient(to_bottom,#334155_1px,transparent_1px)] bg-[size:1rem_1rem] pointer-events-none" />
                         </div>
 
-                        {/* 2. BOTTOM: TERMINAL OR CHAT INTERFACE */}
                         <div className="flex-grow bg-[#0f172a] rounded-[2rem] relative overflow-hidden shadow-2xl flex flex-col border border-slate-800 min-h-[450px]">
-                            {/* Header */}
                             <div className="flex items-center justify-between px-6 py-4 border-b border-slate-800/60 z-10 bg-[#0f172a]">
                                 <div className="flex items-center gap-2">
                                    {showChatInterface ? <MessageSquare size={14} className="text-orange-500" /> : <Terminal size={14} className="text-slate-400" />}
@@ -913,7 +903,8 @@ export default function AISearch() {
                                    </span>
                                 </div>
                                 {!showChatInterface && (
-                                    <div className="flex gap-1.5">
+                                    <div className="flex gap-1.5 items-center">
+                                       {!isGenerating && <Edit3 size={12} className="text-slate-500 mr-2" />}
                                        <div className="w-2.5 h-2.5 rounded-full bg-red-500/20 border border-red-500/50" />
                                        <div className="w-2.5 h-2.5 rounded-full bg-yellow-500/20 border border-yellow-500/50" />
                                        <div className="w-2.5 h-2.5 rounded-full bg-green-500/20 border border-green-500/50" />
@@ -921,18 +912,16 @@ export default function AISearch() {
                                 )}
                             </div>
 
-                            {/* Content Area Switch */}
                             <div className="flex-grow relative h-full bg-[#0b1120]">
                                 <AnimatePresence mode="wait">
                                     {!showChatInterface ? (
-                                        // VIEW 1: TERMINAL / LOGS
                                         <motion.div 
                                             key="terminal"
                                             initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
                                             className="h-full relative"
                                         >
                                             {isGenerating || consoleLogs.length > 0 ? (
-                                                <TypewriterLog logs={consoleLogs} />
+                                                <TiptapStreamLog logs={consoleLogs} isGenerating={isGenerating} />
                                             ) : (
                                                 <div className="h-full flex flex-col items-center justify-center text-center opacity-30 space-y-4 p-8">
                                                     <div className="w-16 h-16 bg-slate-800/50 rounded-full flex items-center justify-center">
@@ -943,7 +932,6 @@ export default function AISearch() {
                                             )}
                                         </motion.div>
                                     ) : (
-                                        // VIEW 2: CHATSCOPE INTERFACE
                                         <motion.div
                                             key="chat"
                                             initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
@@ -984,7 +972,6 @@ export default function AISearch() {
           </SpotlightSection>
         </div>
 
-        {/* --- HISTORY SECTION --- */}
         <div className="w-full">
              <div className="flex items-center justify-between mb-6">
                  <h3 className="text-lg font-bold text-slate-800 flex items-center gap-2">

@@ -6,7 +6,7 @@ import cookieParser from "cookie-parser";
 import authRoutes from "./routes/authRoutes.js";
 import pdfRoutes from "./routes/pdfRoutes.js";
 import searchRoutes from "./routes/searchRoutes.js";
-import passwordRoutes from "./routes/passwordRoutes.js"; // Import password routes
+import passwordRoutes from "./routes/passwordRoutes.js";
 import { runIndexingPipeline } from "./search/indexingPipeline.js";
 import path from "path";
 import fs from "fs";
@@ -17,43 +17,43 @@ dotenv.config();
 
 const app = express();
 
-const reportsDir = path.join(process.cwd(), 'generated_reports');
+/* ================= ORIGINAL SETUP ================= */
+
+const reportsDir = path.join(process.cwd(), "generated_reports");
 if (!fs.existsSync(reportsDir)) {
-    fs.mkdirSync(reportsDir);
-    console.log("Created directory: generated_reports");
+  fs.mkdirSync(reportsDir);
+  console.log("Created directory: generated_reports");
 }
 
 const MONGO_URL = process.env.MONGO_URL;
-const FRONTEND_URL = process.env.FRONTEND_URL;
 
 const allowedOrigins = [
-    "http://localhost:5174", // For
-    //  local development
-    "http://localhost:5173",
-    "http://localhost:3000", // Alternate local port
-    "https://kavachservices.com", // 👈 ADD YOUR LIVE DOMAIN
-    "https://www.kavachservices.com",
-    "http://localhost:8080",              
-    "https://kavach-pdf-tools.onrender.com",   // Local fronten          // Production frontend (domain)
+  "http://localhost:5174",
+  "http://localhost:5173",
+  "http://localhost:3000",
+  "https://kavachservices.com",
+  "https://www.kavachservices.com",
+  "http://localhost:8080",
+  "https://kavach-pdf-tools.onrender.com",
 ];
 
-app.use(cors({
-    origin: allowedOrigins, 
-    credentials: true   
-}));    
-
-// app.options("*")
-app.use(express.json());
-app.use(cookieParser());
+app.use(
+  cors({
+    origin: allowedOrigins,
+    credentials: true,
+  })
+);
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
-// app.use("/workspace",express.static(path.join(process.cwd(), "uploads", "workspace")));
+app.use(cookieParser());
 
-app.use("/api/auth",authRoutes);
-app.use("/api/pdf",pdfRoutes);
-app.use("/api/search",searchRoutes);
-app.use("/api",passwordRoutes);
+app.use("/api/auth", authRoutes);
+app.use("/api/pdf", pdfRoutes);
+app.use("/api/search", searchRoutes);
+app.use("/api", passwordRoutes);
+
+/* ================= DATABASE ================= */
 
 mongoose
   .connect(MONGO_URL, {
@@ -69,7 +69,7 @@ mongoose
     });
 
     /* =====================================================
-       🔥 NEW: WEBSOCKET SERVER FOR LIVE REPORT STREAMING
+       🔥 WEBSOCKET SERVER (STREAMING + RELATED CONTENT)
        ===================================================== */
 
     const wss = new WebSocketServer({ server });
@@ -77,19 +77,19 @@ mongoose
     wss.on("connection", (ws) => {
       console.log("🟢 WebSocket client connected");
 
-      // Spawn Python report stream
-      const pythonPath = path.join(
-        process.cwd(),
-        "python",
-        "main.py"
-      );
+      const pythonPath = path.join(process.cwd(), "python", "main.py");
 
       const py = spawn("python", [pythonPath, "--stream"]);
 
       py.stdout.on("data", (data) => {
-        const lines = data.toString().split("\n").filter(Boolean);
-        lines.forEach((line) => {
-          ws.send(line);
+        const messages = data.toString().split("\n").filter(Boolean);
+
+        messages.forEach((msg) => {
+          try {
+            ws.send(msg); // JSON from Python
+          } catch (err) {
+            console.error("WS send error:", err);
+          }
         });
       });
 
